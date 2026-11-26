@@ -1,0 +1,5 @@
+html, body { margin: 0; height: 100%; background: #111111; color: #FFFFFF; font: 500 14px/1 Inter, "Segoe UI", system-ui, sans-serif; overflow: hidden; -webkit-app-region: drag; user-select: none; }
+.bar { height: 100%; display: flex; align-items: center; gap: 10px; padding: 0 8px 0 16px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: #FB2B3E; flex: none; }
+#text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button { -webkit-app-region: no-drag; height: 32px; padding: 0 16px; border-radius: 8px; border: 0; background: #FFFFFF; color: #111111; font: 600 14px Inter, "Segoe UI", system-ui, sans-serif; cursor: pointer; }

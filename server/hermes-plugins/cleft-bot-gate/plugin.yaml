@@ -1,0 +1,8 @@
+name: cleft-bot-gate
+version: 1.0.0
+description: "Cleft Bot approval gate: asks the Cleft Bot server before Hermes runs any of its own tools, so the owner's approval cards cover the terminal, files, the browser and the rest. Fails closed."
+author: Cleft Bot
+kind: standalone
+provides_hooks:
+  - pre_tool_call
+  - transform_tool_result

@@ -1,0 +1,55 @@
+/* The quick-ask card (components/QuickAsk.tsx): /?talk in a browser, and the Windows Talk popup. */
+.quickask {
+  position: fixed; inset: 0; display: flex; align-items: flex-end; justify-content: center;
+  padding: 16px; background: var(--color-bg-scrim); z-index: 50;
+}
+.quickask--popup { padding: 0; background: var(--color-bg-elevated); align-items: stretch; }
+.quickask__card {
+  width: min(600px, 100%); background: var(--color-bg-elevated); color: var(--color-text-primary);
+  border-radius: 24px; padding: 14px 16px 12px; display: flex; flex-direction: column; gap: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25); max-height: calc(100dvh - 32px);
+}
+.quickask--popup .quickask__card { width: 100%; border-radius: 0; box-shadow: none; max-height: 100vh; }
+.quickask__head { display: flex; align-items: center; gap: 10px; }
+.quickask__name { flex: 1; font-weight: var(--font-weight-semibold); font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quickask__round {
+  width: 34px; height: 34px; border-radius: 17px; border: 0; background: transparent; color: var(--color-text-secondary);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex: none;
+}
+.quickask__round:hover { background: var(--color-bg-hover); }
+.quickask__answer { overflow: auto; max-height: 46vh; display: flex; flex-direction: column; gap: 8px; font-size: 14.5px; line-height: 1.5; }
+.quickask--popup .quickask__answer { max-height: 420px; }
+.quickask__asked { color: var(--color-text-tertiary); font-size: 13.5px; }
+.quickask__waiting {
+  text-align: left; border: 0; border-radius: 14px; padding: 10px 12px; background: var(--color-bg-subtle); color: inherit;
+  display: flex; flex-direction: column; gap: 2px; cursor: pointer; font: inherit;
+}
+.quickask__waiting span { color: var(--color-text-secondary); font-size: 13px; }
+.quickask__status { display: flex; align-items: center; gap: 8px; color: var(--color-text-secondary); font-size: 14px; }
+.quickask__dots { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--color-border-secondary); border-top-color: var(--color-text-secondary); animation: quickask-spin 0.9s linear infinite; }
+@keyframes quickask-spin { to { transform: rotate(360deg); } }
+.quickask__words { font-size: 19px; line-height: 1.4; min-height: 27px; }
+.quickask__pending { color: var(--color-text-tertiary); }
+.quickask__note { font-size: 13px; color: var(--color-text-secondary); }
+.quickask__note--bad { color: var(--color-danger-text); }
+.quickask__chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.quickask__chips:empty { display: none; }
+.quickask__chip {
+  display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--color-border-secondary); border-radius: 16px;
+  padding: 6px 12px; background: transparent; color: inherit; font: inherit; font-size: 13.5px; cursor: pointer;
+}
+.quickask__chip:hover { background: var(--color-bg-hover); }
+.quickask__pic { display: inline-flex; align-items: center; gap: 8px; background: var(--color-bg-subtle); border-radius: 12px; padding: 4px 2px 4px 4px; max-width: 220px; font-size: 13px; }
+.quickask__pic img { width: 32px; height: 32px; border-radius: 8px; object-fit: cover; }
+.quickask__pic span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quickask__pic button { border: 0; background: transparent; color: var(--color-text-secondary); cursor: pointer; padding: 4px 6px; display: inline-flex; }
+.quickask__bar { display: flex; align-items: center; gap: 6px; }
+.quickask__field { flex: 1; min-height: 42px; border-radius: 21px; background: var(--color-bg-subtle); display: flex; align-items: center; padding: 0 14px; }
+.quickask__field input { flex: 1; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; font-size: 15px; }
+.quickask__wave { display: flex; align-items: center; gap: 3px; height: 24px; }
+.quickask__wave span { width: 3px; border-radius: 2px; background: var(--color-danger); transition: height 80ms linear; }
+.quickask__big {
+  width: 42px; height: 42px; border-radius: 21px; border: 0; background: var(--color-primary); color: var(--color-on-primary);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex: none;
+}
+.quickask__big--on { background: var(--color-danger); }

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YBots</title>
+<link rel="stylesheet" href="page.css">
+</head>
+<body>
+<main>
+  <h1>Welcome to YBots</h1>
+  <p>This app opens your own YBots. Nothing is built in: tell it where yours lives.</p>
+
+  <form class="card" id="address-form">
+    <h2>Your YBots address</h2>
+    <label for="address">Your tailnet name or your YBots web address</label>
+    <input id="address" name="address" placeholder="cleft.example.ts.net" autocomplete="off" spellcheck="false" required>
+    <div class="chips" id="recent" hidden></div>
+    <div class="error" id="address-error" role="alert"></div>
+    <div class="row">
+      <button type="button" class="secondary" id="address-back" hidden>Cancel</button>
+      <button type="submit">Continue</button>
+    </div>
+  </form>
+
+  <section class="card" id="pair-card" hidden>
+    <h2>Sign in with your phone</h2>
+    <ol>
+      <li>On your phone, open the YBots app, then your account menu › Your PCs › <b>Scan the QR code</b>, and scan this code. (Or scan it with the phone's camera to answer in a browser where you are signed in to YBots.)</li>
+      <li>Check that the code on your phone matches <b id="pair-code">…</b>, then tap <b>Allow</b>.</li>
+    </ol>
+    <div class="qr" id="pair-qr" role="img" aria-label="Sign-in QR code"></div>
+    <div class="code-row"><b id="pair-code-big" aria-hidden="true"></b><button type="button" class="secondary" id="pair-copy" hidden>Copy code</button></div>
+    <p class="hint" id="pair-status">Making a code…</p>
+    <div class="error" id="pair-error" role="alert"></div>
+    <div class="row">
+      <button type="button" class="secondary" id="pair-new">New code</button>
+      <button type="button" class="secondary" id="pair-link">Paste a link instead</button>
+    </div>
+    <button type="button" class="secondary" id="pair-open">Open YBots</button>
+  </section>
+
+  <form class="card" id="link-form" hidden>
+    <h2>Sign in with a link</h2>
+    <ol>
+      <li>On your phone or another signed-in device, open YBots.</li>
+      <li>Open your account menu and choose <b>Sign in another device</b>.</li>
+      <li>Copy the link and paste it here. It works once, for 15 minutes.</li>
+    </ol>
+    <div class="input-row">
+      <input id="link" name="link" placeholder="https://…/api/auth/link/…" autocomplete="off" spellcheck="false" required aria-label="Sign-in link">
+      <button type="button" class="secondary" id="link-paste">Paste</button>
+    </div>
+    <div class="error" id="link-error" role="alert"></div>
+    <div class="row">
+      <button type="button" class="secondary" id="skip-link">Back to the app</button>
+      <button type="submit">Sign in</button>
+    </div>
+  </form>
+  <p class="hint" id="current"></p>
+</main>
+<script src="setup.js"></script>
+</body>
+</html>

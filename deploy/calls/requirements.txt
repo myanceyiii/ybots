@@ -1,0 +1,6 @@
+pipecat-ai[silero,openai]==1.17.0
+fastapi
+uvicorn
+httpx
+websockets
+numpy

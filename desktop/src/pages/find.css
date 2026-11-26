@@ -1,0 +1,12 @@
+:root { color-scheme: light dark; --ground: #FFFFFF; --fill: #EFEFEF; --ink: #111111; --muted: #6B6B6B; --line: #D6D6D6; --danger: #C4202D; }
+@media (prefers-color-scheme: dark) { :root { --ground: #1F1F1F; --fill: #2A2A2A; --ink: #F5F5F5; --muted: #F5F5F58A; --line: #F5F5F526; --danger: #FF5A67; } }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--ground); color: var(--ink); font: 400 14px/1 Inter, "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+.find { height: 100%; display: flex; align-items: center; gap: 4px; padding: 8px; border: 1px solid var(--line); }
+input { flex: 1; min-width: 0; height: 34px; border-radius: 8px; border: 1px solid transparent; background: var(--fill); padding: 0 10px; font: inherit; color: var(--ink); outline: none; }
+input:focus { border-color: var(--ink); }
+#count { min-width: 56px; text-align: center; color: var(--muted); font-size: 13px; white-space: nowrap; }
+#count.none { color: var(--danger); }
+button { width: 32px; height: 32px; border-radius: 8px; border: 0; background: transparent; color: var(--ink); font-size: 15px; cursor: pointer; }
+button:hover { background: var(--fill); }
+button:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }

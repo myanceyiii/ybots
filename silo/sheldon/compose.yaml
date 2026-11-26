@@ -1,0 +1,100 @@
+# Sheldon's silo. Start with:  docker compose -f silo/sheldon/compose.yaml --env-file /etc/cleft-bot/silo/sheldon/silo.env up -d --build
+# Full steps and what each setting protects: docs/sheldon-silo.md.
+name: cleft-sheldon
+
+services:
+  sheldon:
+    build:
+      context: .
+      additional_contexts:
+        gate-plugin: ../../server/hermes-plugins/cleft-bot-gate
+      args:
+        BROWSER: ${SILO_BROWSER:-microsoft-edge}  # or google-chrome, none
+        HERMES_COMMIT: ${HERMES_COMMIT:-}
+    image: cleft-bot/sheldon:local
+    hostname: sheldon
+    restart: unless-stopped
+    networks: [inside]
+    environment:
+      MCP_URL: http://gate:8787/mcp/${SHELDON_BOT_ID:?set SHELDON_BOT_ID}
+      SILO_PROXY: http://gate:8888
+      # Also set here (not only in the entrypoint) so `docker exec` shells, such as the owner's
+      # `hermes auth add`, go out through the gate too. The container has no DNS of its own.
+      HTTPS_PROXY: http://gate:8888
+      HTTP_PROXY: http://gate:8888
+      https_proxy: http://gate:8888
+      http_proxy: http://gate:8888
+      NO_PROXY: localhost,127.0.0.1,::1,gate
+      no_proxy: localhost,127.0.0.1,::1,gate
+      CHROME_NO_SANDBOX: ${CHROME_NO_SANDBOX:-0}
+      HERMES_GATE: ${HERMES_GATE:-1}
+      TZ: ${TZ:-America/Chicago}
+    secrets: [api_key, vnc_password, mcp_token]
+    volumes:
+      # The encrypted volume (host/make-volume.sh). Nothing else from the host is mounted.
+      - ${SILO_DATA:?set SILO_DATA}:/data
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+      - /run/user:size=16m,mode=1777
+    user: "10101:10101"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    shm_size: 1g
+    pids_limit: 1024
+    mem_limit: ${SILO_MEMORY:-6g}
+    cpus: ${SILO_CPUS:-2.0}
+
+  gate:
+    build: ./gate
+    image: cleft-bot/sheldon-gate:local
+    restart: unless-stopped
+    depends_on: [sheldon]
+    networks:
+      inside: {}
+      outside:
+        ipv4_address: ${GATE_IP:-172.30.53.2}
+    environment:
+      SILO_SUBNET: ${INSIDE_SUBNET:-172.30.54.0/28}
+      HOST_RELAY: ${HOST_RELAY:-172.30.53.1:8789}
+      # allowlist (default) or open: see gate/entrypoint.sh and host/sheldon-egress-guard.sh.
+      SILO_EGRESS: ${SILO_EGRESS:-allowlist}
+    volumes:
+      - ${SILO_ALLOWLIST:?set SILO_ALLOWLIST}:/etc/silo/allowlist:ro
+    ports:
+      # Only on the host's loopback, for the app.
+      - 127.0.0.1:${AGENT_PORT:-8653}:8642
+      - 127.0.0.1:${VNC_PORT:-5953}:5900
+    read_only: true
+    tmpfs: [/tmp:size=16m]
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 256m
+
+networks:
+  # No route out: Sheldon reaches only the gate.
+  inside:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${INSIDE_SUBNET:-172.30.54.0/28}
+    driver_opts:
+      com.docker.network.bridge.name: br-sheldon-in
+  # The gate's side: internet through Docker's NAT, and the host relay on the gateway address.
+  outside:
+    ipam:
+      config:
+        - subnet: ${OUTSIDE_SUBNET:-172.30.53.0/28}
+          gateway: ${OUTSIDE_GATEWAY:-172.30.53.1}
+    driver_opts:
+      com.docker.network.bridge.name: br-sheldon-out
+
+secrets:
+  api_key:
+    file: ${SECRETS_DIR:?set SECRETS_DIR}/api_key
+  vnc_password:
+    file: ${SECRETS_DIR}/vnc_password
+  mcp_token:
+    file: ${SECRETS_DIR}/mcp_token

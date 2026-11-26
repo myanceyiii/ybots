@@ -1,0 +1,20 @@
+# Never reachable through the gate, even in open mode: this machine, the home network, the tailnet
+# and link-local. Matched against the host name or IP literal the client asks for (ERE, case-insensitive).
+# Names that resolve to these addresses are stopped by host/sheldon-egress-guard.sh at the firewall.
+^localhost$
+\.localhost$
+^(gate|sheldon)$
+\.(local|lan|home|internal|localdomain|home\.arpa)$
+\.ts\.net$
+^\[
+^[0-9]+$
+^0x
+^0\.
+^127\.
+^10\.
+^172\.(1[6-9]|2[0-9]|3[01])\.
+^192\.168\.
+^169\.254\.
+^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.
+^22[4-9]\.
+^2[3-5][0-9]\.

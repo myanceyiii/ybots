@@ -1,0 +1,39 @@
+:root { color-scheme: light dark; --ground: #FFFFFF; --fill: #EFEFEF; --ink: #111111; --ink2: #555555; --muted: #6B6B6B; --line: #D6D6D6; --danger: #C4202D; --btn: #111111; --btn-ink: #FFFFFF; --ok: #17804A; }
+@media (prefers-color-scheme: dark) { :root { --ground: #1B1B1B; --fill: #2A2A2A; --ink: #F5F5F5; --ink2: #F5F5F5A8; --muted: #F5F5F58A; --line: #F5F5F526; --danger: #FF5A67; --btn: #F5F5F5; --btn-ink: #111111; --ok: #2FBF71; } }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--ground); color: var(--ink); font: 400 15px/1.35 Inter, "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+.quick { height: 100%; display: flex; flex-direction: column; gap: 10px; padding: 14px 16px 12px; border: 1px solid var(--line); -webkit-app-region: drag; }
+.bots { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; flex: none; min-height: 34px; -webkit-app-region: no-drag; }
+.bots::-webkit-scrollbar { display: none; }
+.bot { display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px 0 5px; border-radius: 17px; border: 1px solid var(--line); background: transparent; color: var(--ink2); font: inherit; font-size: 14px; white-space: nowrap; cursor: pointer; flex: none; }
+.bot .face { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; color: #FFFFFF; font-weight: 600; font-size: 12px; background: #5B6472; }
+.bot[aria-checked="true"] { background: var(--fill); color: var(--ink); border-color: var(--ink); }
+.bot:focus-visible, button:focus-visible, textarea:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.bot .n { font-size: 11px; color: var(--muted); margin-left: 2px; }
+.face.brown { background: #A06B39; } .face.red { background: #D92B3A; } .face.orange { background: #E0600F; } .face.yellow { background: #B98A00; } .face.green { background: #1E9E5A; }
+.face.cyan { background: #0E8FA3; } .face.blue { background: #2F6FE0; } .face.violet { background: #7A4FE0; } .face.magenta { background: #C23A9A; }
+textarea { flex: 1; min-height: 0; width: 100%; resize: none; border-radius: 12px; border: 1px solid transparent; background: var(--fill); padding: 10px 12px; font: inherit; color: var(--ink); outline: none; -webkit-app-region: no-drag; }
+.foot { display: flex; align-items: center; gap: 10px; flex: none; -webkit-app-region: no-drag; }
+.status { flex: 1; min-width: 0; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status.error { color: var(--danger); }
+.status.ok { color: var(--ok); }
+button { height: 34px; padding: 0 16px; border-radius: 10px; border: 0; font: 500 14px Inter, "Segoe UI", system-ui, sans-serif; cursor: pointer; background: var(--btn); color: var(--btn-ink); }
+button.link { background: transparent; color: var(--ink2); padding: 0 8px; }
+button.link:hover { color: var(--ink); text-decoration: underline; }
+button:disabled { opacity: 0.45; cursor: default; }
+.empty { color: var(--muted); font-size: 14px; align-self: center; }
+.files { display: flex; gap: 8px; overflow-x: auto; flex: none; height: 62px; scrollbar-width: thin; -webkit-app-region: no-drag; }
+.files[hidden] { display: none; }
+.file { position: relative; display: flex; align-items: center; gap: 8px; height: 56px; max-width: 220px; padding: 6px 30px 6px 6px; border: 1px solid var(--line); border-radius: 10px; flex: none; }
+.file img { height: 44px; max-width: 78px; border-radius: 6px; object-fit: cover; }
+.file .doc { width: 36px; height: 44px; border-radius: 6px; background: var(--fill); display: grid; place-items: center; font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; }
+.file .meta { min-width: 0; display: flex; flex-direction: column; font-size: 12px; }
+.file .meta b { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file .meta small { color: var(--muted); }
+.file .x { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; padding: 0; border-radius: 50%; background: var(--fill); color: var(--ink); font-size: 14px; line-height: 1; }
+button.icon { width: 34px; padding: 0; background: transparent; color: var(--ink2); display: grid; place-items: center; }
+button.icon:hover { background: var(--fill); color: var(--ink); }
+.quick.dropping { border-color: var(--ink); border-style: dashed; }
+.bot .face { position: relative; }
+.bot.waiting .face::after, .bot.unread .face::after { content: ""; position: absolute; top: -2px; right: -2px; width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--ground); background: #2F6FE0; }
+.bot.waiting .face::after { background: #E0600F; }

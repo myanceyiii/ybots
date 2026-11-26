@@ -1,0 +1,2 @@
+{ "name": "Plain", "entry": "server.mjs", "allow": ["*"], "block": ["wipe"],
+  "settings": [{ "key": "greeting", "label": "Greeting", "type": "text" }, { "key": "api_key", "label": "API key", "type": "secret" }] }

@@ -1,0 +1,29 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+data/
+apps.json
+.DS_Store
+
+# Local-only material (not part of the open-source repo)
+design/
+docs/research/
+docs/INTERNAL-*.md
+docs/SPEC.md
+web/screenshots/
+tests/out/
+# Build-time CA certificates for Sheldon's silo stay local
+silo/sheldon/ca/*.crt
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Private household material (kept outside Git; see deploy/household-skills/README.md)
+deploy/household-skills/*
+!deploy/household-skills/README.md
+docs/team-plan.md

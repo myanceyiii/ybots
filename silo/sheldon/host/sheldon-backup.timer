@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly encrypted backup of Sheldon's volume
+
+[Timer]
+OnCalendar=Sun *-*-* 03:30:00 America/Chicago
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

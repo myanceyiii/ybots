@@ -1,0 +1,106 @@
+/* ---------- window grid: sidebar 350 · chat · details 360 ---------- */
+.app { display: flex; height: 100%; width: 100%; background: var(--color-bg-chrome); overflow: hidden; }
+
+.sidebar {
+  position: relative; display: flex; flex-direction: column; flex-shrink: 0;
+  width: 350px; height: 100%;
+  background: var(--color-bg-sidebar); border-right: 0.5px solid var(--color-border-tertiary);
+  transition: width 0.2s var(--ease-out);
+}
+.sidebar.is-collapsed { width: 88px; }
+.sidebar__titlebar { position: relative; display: flex; align-items: center; justify-content: flex-end; height: 60px; flex-shrink: 0; padding: 12px 16px 12px 10px; }
+.sidebar__controls { display: flex; align-items: center; gap: 10px; }
+.sidebar.is-collapsed .sidebar__titlebar { justify-content: center; padding: 12px 0; }
+
+.sidebar__scroll { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 12px 40px; scrollbar-width: none; }
+.sidebar__scroll::-webkit-scrollbar { display: none; }
+
+.bot-list { display: flex; flex-direction: column; gap: 2px; }
+/* Rows at the Android home's scale: a 72 px head-and-shoulders picture, name and time, up to three lines of the last message. */
+.bot-row {
+  display: flex; align-items: flex-start; gap: 12px; padding: 10px; border-radius: 16px; width: 100%; text-align: left;
+  transition: background-color 120ms var(--ease-out);
+}
+.bot-row:hover { background: var(--color-bg-hover); }
+.bot-row.is-selected { background: var(--color-bg-active); }
+.bot-row__avatar { position: relative; display: inline-flex; flex-shrink: 0; }
+/* Rounded squares show more of the head and shoulders than circles do. */
+.bot-row__pic .bot-avatar__img { border-radius: 20px; }
+.bot-rail-item .bot-row__pic .bot-avatar__img { border-radius: 16px; }
+.bot-row__avatar .status-dot { right: -3px; top: -3px; }
+.bot-row.is-selected .status-dot, .bot-row:hover .status-dot { box-shadow: 0 0 0 2.5px var(--color-bg-active-solid); }
+.bot-row__text { display: flex; flex-direction: column; gap: 3px; flex: 1 1 0; min-width: 0; padding-top: 2px; }
+.bot-row__top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bot-row__name { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 16px; font-weight: 600; line-height: 22px; letter-spacing: 0.1px; color: var(--color-ink); }
+.bot-row__time { margin-left: auto; padding-left: 6px; flex-shrink: 0; white-space: nowrap; font-size: 12px; line-height: 22px; color: var(--color-text-tertiary); }
+.bot-row.is-unread .bot-row__time { color: var(--color-bot-blue); font-weight: 600; }
+.bot-row__preview {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; overflow-wrap: anywhere;
+  font-size: 14px; line-height: 20px; letter-spacing: 0.1px; color: var(--color-text-secondary);
+}
+.bot-row.is-unread .bot-row__preview { color: var(--color-ink); }
+/* The primary bot: first in the list, on a soft tinted card with a star on its picture. */
+.bot-row.is-primary { background: color-mix(in srgb, var(--color-bot-yellow) 9%, transparent); box-shadow: color-mix(in srgb, var(--color-bot-yellow) 28%, transparent) 0 0 0 1px inset; margin-bottom: 6px; }
+.bot-row.is-primary:hover { background: color-mix(in srgb, var(--color-bot-yellow) 14%, transparent); }
+.bot-row.is-primary.is-selected { background: color-mix(in srgb, var(--color-bot-yellow) 8%, var(--color-bg-active)); }
+.bot-row__avatar .bot-avatar__star { right: -4px; bottom: -4px; box-shadow: var(--color-bg-sidebar) 0 0 0 2px; }
+.bot-rail-item { position: relative; display: flex; align-items: center; justify-content: center; height: 68px; border-radius: 14px; }
+.bot-rail-item:hover { background: var(--color-bg-hover); }
+.bot-rail-item.is-selected { background: var(--color-bg-active); }
+.bot-rail-item.is-primary { background: color-mix(in srgb, var(--color-bot-yellow) 10%, transparent); margin-bottom: 6px; }
+.bot-rail-item .status-dot { right: 8px; top: 4px; }
+.bot-list__empty { display: flex; align-items: center; gap: 12px; padding: 10px; text-align: left; border-radius: 12px; border: 0.5px dashed var(--color-border-secondary); }
+.bot-list__empty:hover { background: var(--color-bg-hover); }
+.bot-list__empty > span:last-child { display: flex; flex-direction: column; min-width: 0; }
+.bot-list__empty-plus { display: inline-flex; align-items: center; justify-content: center; width: 72px; height: 72px; flex-shrink: 0; border-radius: 20px; background: var(--color-bg-pane); border: 0.5px solid var(--color-border-tertiary); }
+
+.sidebar__footer { position: relative; display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 16px 16px; flex-shrink: 0; }
+.sidebar__fade { position: absolute; left: 0; right: 0; top: -40px; height: 40px; pointer-events: none; background: linear-gradient(180deg, transparent 0%, var(--color-bg-sidebar) 100%); }
+.sidebar.is-collapsed .sidebar__footer { justify-content: center; padding: 0 0 16px; }
+.account { position: relative; display: flex; align-items: center; gap: 8px; flex: 1 1 0; min-width: 0; padding-right: 4px; border-radius: var(--radius-full); }
+.account__btn { display: flex; align-items: center; gap: 8px; min-width: 0; border-radius: var(--radius-full); padding-right: 10px; }
+.account__btn:hover { background: var(--color-bg-hover); }
+.account__initials {
+  display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex-shrink: 0; border-radius: var(--radius-full);
+  background: var(--color-bg-active); box-shadow: var(--color-border-tertiary) 0 0 0 0.5px inset;
+  color: var(--color-text-secondary); font-size: 14px; font-weight: 500; letter-spacing: -0.35px; line-height: 14px;
+}
+.account__name { font-size: 14px; font-weight: 500; line-height: 20px; letter-spacing: 0.14px; color: var(--color-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Outside members (a bot reached through Slack, outside.ts) */
+.bot-list__section { padding: 14px 12px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase; color: var(--color-text-tertiary); }
+.bot-list__divider { height: 1px; margin: 8px 10px; background: var(--color-border-tertiary); }
+.outside-badge { display: inline-block; flex-shrink: 0; white-space: nowrap; padding: 0 5px; border-radius: 4px; font-size: 10px; font-weight: 600; line-height: 16px; letter-spacing: 0.3px; vertical-align: 1px; color: var(--color-bot-purple); background: color-mix(in srgb, var(--color-bot-purple) 12%, transparent); }
+
+/* Unread count, on the list row (after the time) and on the collapsed rail (corner of the picture). */
+.unread-badge { flex: none; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--color-bot-blue); color: #FFFFFF; font-size: 11px; font-weight: 600; line-height: 18px; text-align: center; margin-left: 6px; }
+.bot-rail-item { position: relative; }
+.unread-badge--rail { position: absolute; right: 0; bottom: 0; margin: 0; box-shadow: 0 0 0 2px var(--color-bg-sidebar); }
+
+/* ---------- the list's width is dragged (lib/sidebarFit.ts); Sidebar tweens it, so no CSS width transition ---------- */
+.sidebar.is-resizable { transition: none; overflow: hidden; }
+.sidebar__controls { flex: 1 1 auto; min-width: 0; }
+.sidebar__spacer { flex: 1 1 auto; }
+.sidebar.is-collapsed .sidebar__titlebar { justify-content: flex-start; }
+.sidebar__footer { justify-content: flex-end; }
+.sidebar.is-collapsed .sidebar__footer { justify-content: flex-end; padding-left: 0; }
+.sidebar__resizer {
+  position: fixed; top: 0; bottom: 0; width: 10px; z-index: 30; cursor: col-resize; touch-action: none;
+  display: flex; align-items: center; justify-content: center; outline: none;
+}
+.sidebar__grip { width: 4px; height: 40px; border-radius: 2px; background: var(--color-text-tertiary); opacity: 0; transition: opacity 150ms var(--ease-out), height 150ms var(--ease-out); }
+.sidebar__resizer:hover .sidebar__grip, .sidebar__resizer:focus-visible .sidebar__grip { opacity: 0.55; }
+.sidebar__resizer.is-dragging .sidebar__grip { opacity: 0.9; height: 56px; background: var(--color-bot-blue); }
+/* The edge between the chat and the side panel (components/SideResizer.tsx), above a medium window's sliding panel. */
+.side-resizer {
+  position: fixed; top: 0; bottom: 0; width: 10px; z-index: 31; cursor: col-resize; touch-action: none;
+  display: flex; align-items: center; justify-content: center; outline: none;
+}
+.side-resizer:hover .sidebar__grip, .side-resizer:focus-visible .sidebar__grip { opacity: 0.55; }
+.side-resizer.is-dragging .sidebar__grip { opacity: 0.9; height: 56px; background: var(--color-bot-blue); }
+body.is-resizing-sidebar, body.is-resizing-sidebar * { cursor: col-resize !important; user-select: none !important; }
+/* Full-screen chat: the details panel steps aside too (the list is already at width 0). */
+.app.is-chat-full .details, .app.is-chat-full .file-pane { display: none; }
+/* Tasks and Connections fade their words with the bot names, and never wrap while the list narrows. */
+.sidebar.is-resizable .sidebar-island { white-space: nowrap; overflow: hidden; }
+.sidebar.is-resizable .sidebar-island__label, .sidebar.is-resizable .sidebar-island__count { opacity: var(--sb-name, 1); }

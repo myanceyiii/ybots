@@ -1,0 +1,4 @@
+# Pinned for cleft-live-stt (install.sh). Moonshine Voice: MIT (code and English streaming models).
+moonshine-voice==0.1.6
+numpy==2.5.5
+websockets==15.0.1

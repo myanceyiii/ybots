@@ -1,0 +1,33 @@
+[Unit]
+Description=YBots phone calls (Telnyx audio, local speech, 127.0.0.1 only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+DynamicUser=yes
+StateDirectory=cleft-calls
+StateDirectoryMode=0700
+# Keys: Telnyx API key, the call service key (from SESSION_SECRET), number, allowed numbers. Root-only files.
+EnvironmentFile=/etc/cleft-bot/calls/telnyx.env
+EnvironmentFile=/etc/cleft-bot/calls/calls.env
+Environment=CALLS_STATE=/var/lib/cleft-calls
+Environment=CALLS_HOST=127.0.0.1
+Environment=CALLS_PORT=8791
+ExecStart=/opt/cleft-calls/venv/bin/python /opt/cleft-calls/cleft_calls.py
+Restart=on-failure
+RestartSec=5
+# Keep the bots first: lower priority, at most two cores' worth, bounded memory.
+Nice=5
+CPUQuota=200%
+MemoryMax=2G
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

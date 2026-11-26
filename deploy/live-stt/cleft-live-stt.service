@@ -1,0 +1,30 @@
+[Unit]
+Description=YBots live dictation (Moonshine streaming speech-to-text, 127.0.0.1 only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+DynamicUser=yes
+CacheDirectory=cleft-live-stt
+Environment=LIVE_STT_CACHE=/var/cache/cleft-live-stt
+Environment=LIVE_STT_HOST=127.0.0.1
+Environment=LIVE_STT_PORT=8790
+Environment=LIVE_STT_MODEL=SMALL_STREAMING
+ExecStart=/opt/cleft-live-stt/venv/bin/python /opt/cleft-live-stt/cleft_live_stt.py
+Restart=on-failure
+RestartSec=5
+# Keep the bots first: lower priority, at most two cores' worth, bounded memory.
+Nice=5
+CPUQuota=200%
+MemoryMax=2G
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

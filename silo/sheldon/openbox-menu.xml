@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_menu xmlns="http://openbox.org/3.4/menu">
+  <menu id="root-menu" label="Sheldon">
+    <item label="Terminal"><action name="Execute"><command>xterm -fa Monospace -fs 11</command></action></item>
+    <item label="Browser"><action name="Execute"><command>silo-entrypoint browser</command></action></item>
+  </menu>
+</openbox_menu>

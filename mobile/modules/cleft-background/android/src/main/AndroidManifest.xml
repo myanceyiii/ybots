@@ -1,0 +1,45 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- Watching a slow job (pictures being drawn) while the app is in the background, and saying when it is done. -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+  <!-- The notification link to the server (NotifyService): a service that stays on, so not dataSync (6 h a day on Android 15). -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <!-- Only used when the person turns on "Keep YBots running in the background" in Settings. -->
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+  <!-- Phone timers and alarms a bot sets (PhoneActions.kt): the standard AlarmClock intents need SET_ALARM. -->
+  <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+  <!-- Only so the person can turn on "Display over other apps", which lets the app open the Clock app from the background (Settings > Phone timers and alarms). -->
+  <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+  <!-- Android 11+ package visibility: to check a Clock app takes these before sending them. -->
+  <queries>
+    <intent><action android:name="android.intent.action.SET_TIMER" /></intent>
+    <intent><action android:name="android.intent.action.SET_ALARM" /></intent>
+    <intent><action android:name="android.intent.action.SHOW_ALARMS" /></intent>
+    <intent><action android:name="android.intent.action.SHOW_TIMERS" /></intent>
+    <intent><action android:name="android.intent.action.DISMISS_ALARM" /></intent>
+  </queries>
+  <application>
+    <service
+      android:name="com.yancey.cleftbackground.JobWatchService"
+      android:exported="false"
+      android:foregroundServiceType="dataSync" />
+    <service
+      android:name="com.yancey.cleftbackground.NotifyService"
+      android:exported="false"
+      android:foregroundServiceType="specialUse">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="Holds the connection to the person's own self-hosted server so replies and approval requests arrive as notifications, without a third-party push service." />
+    </service>
+    <receiver android:name="com.yancey.cleftbackground.NotifyActionReceiver" android:exported="false" />
+    <!-- Exported so the system boot broadcast always reaches it; it only restarts this app's own link. -->
+    <receiver android:name="com.yancey.cleftbackground.NotifyBootReceiver" android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+      </intent-filter>
+    </receiver>
+  </application>
+</manifest>

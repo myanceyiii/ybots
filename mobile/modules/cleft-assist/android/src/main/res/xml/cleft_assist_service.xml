@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The phone's assistant (Settings › Apps › Default apps › Digital assistant app). supportsAssist: the
+     assistant gesture (hold the power button, swipe up from a bottom corner) opens this app's card.
+     A voice interaction service must also name a recognition service; AssistRecognitionService passes
+     every request on to the phone's own speech recognizer, so voice typing in other apps keeps working. -->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+  android:sessionService="com.yancey.cleftassist.AssistSessionService"
+  android:recognitionService="com.yancey.cleftassist.AssistRecognitionService"
+  android:supportsAssist="true"
+  android:supportsLaunchVoiceAssistFromKeyguard="false" />

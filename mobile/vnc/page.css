@@ -1,0 +1,66 @@
+/* The bot's screen inside the phone app's WebView. Colours follow the web app's dark screen stage. */
+:root { --surface: #1B1B1B; --ink: #FFFFFF; --muted: #FFFFFF99; --action: #FFFFFF; --on-action: #111111; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; background: #000000; color: var(--ink); overflow: hidden; overscroll-behavior: none; }
+body { display: flex; flex-direction: column; font: 13px/18px system-ui, Roboto, sans-serif; }
+button { font: inherit; border: 0; margin: 0; padding: 0; background: none; color: inherit; cursor: pointer; }
+#view { position: relative; flex: 1 1 0; min-height: 0; }
+#canvas { position: absolute; inset: 0; }
+#canvas > div { background: transparent !important; }
+/* Every touch on the picture belongs to the remote screen, not to page scrolling, zooming or text selection. */
+#canvas, #canvas canvas { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+#touch { position: relative; flex-shrink: 0; background: var(--surface); }
+#touch[hidden] { display: none; }
+/* Off screen but focusable: it only exists to bring up the phone keyboard. */
+#input {
+  position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; padding: 0; border: 0; margin: 0;
+  opacity: 0; font-size: 16px; resize: none; overflow: hidden; caret-color: transparent; pointer-events: none;
+}
+.bar { display: flex; align-items: center; gap: 4px; height: 52px; padding: 0 8px; }
+.spacer { flex: 1 1 0; min-width: 4px; }
+.icon {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 44px; height: 40px; padding: 0 10px;
+  flex-shrink: 0; border-radius: 999px; color: var(--ink); font-weight: 500; white-space: nowrap;
+  touch-action: manipulation; -webkit-user-select: none; user-select: none;
+}
+.icon.is-on { background: var(--ink); color: var(--surface); }
+.icon .lbl { display: none; }
+.handback {
+  display: inline-flex; align-items: center; height: 40px; padding: 0 16px; flex-shrink: 0; border-radius: 999px;
+  background: var(--action); color: var(--on-action); font-weight: 600; white-space: nowrap; touch-action: manipulation;
+}
+.keys { display: flex; align-items: center; gap: 6px; height: 46px; padding: 6px 8px 0; overflow-x: auto; scrollbar-width: none; }
+.keys::-webkit-scrollbar { display: none; }
+.key {
+  flex-shrink: 0; min-width: 44px; height: 38px; padding: 0 12px; border-radius: 10px;
+  background: color-mix(in srgb, var(--ink) 12%, transparent); color: var(--ink); font-weight: 500; white-space: nowrap;
+  touch-action: manipulation; -webkit-user-select: none; user-select: none;
+}
+.key:active { background: color-mix(in srgb, var(--ink) 24%, transparent); }
+.key.is-on { background: var(--action); color: var(--on-action); }
+.help {
+  position: absolute; left: 8px; right: 8px; bottom: calc(100% + 8px); z-index: 2; display: flex; align-items: flex-end; gap: 10px;
+  max-width: 560px; margin: 0 auto; padding: 10px 10px 10px 14px; border-radius: 14px; background: #1C1C1CF2; color: #FFFFFF;
+  box-shadow: 0 8px 28px #00000059, inset 0 0 0 0.5px #FFFFFF24;
+}
+.help ul { flex: 1 1 0; min-width: 0; margin: 0; padding: 0; list-style: none; font-size: 12.5px; line-height: 18px; color: #FFFFFFD9; }
+.help b { font-weight: 600; color: #FFFFFF; }
+.help-ok { flex-shrink: 0; height: 32px; padding: 0 14px; border-radius: 999px; background: #FFFFFF; color: #141414; font-weight: 600; }
+/* Unfolded foldables and tablets have room for words next to the icons. */
+@media (min-width: 560px) {
+  .icon .lbl { display: inline; }
+  .icon { padding: 0 14px 0 12px; }
+  .bar { gap: 6px; padding: 0 12px; }
+}
+@media (max-width: 400px) {
+  .icon { min-width: 36px; padding: 0 6px; }
+  .bar { gap: 2px; }
+  .handback { padding: 0 12px; }
+}
+/* What just happened with copy and paste, floating above the bar for a few seconds. */
+.note {
+  position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); z-index: 3; max-width: calc(100% - 24px);
+  padding: 8px 14px; border-radius: 999px; background: #1C1C1CF2; color: #FFFFFF; font-size: 13px; line-height: 18px;
+  box-shadow: 0 6px 20px #00000059; pointer-events: none; text-align: center;
+}
+.key:disabled { opacity: 0.5; }

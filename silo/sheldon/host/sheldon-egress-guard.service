@@ -1,0 +1,13 @@
+[Unit]
+Description=Cleft Bot: keep Sheldon's gate off private, tailnet and link-local addresses
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/cleft-bot/sheldon-egress-guard.sh
+ExecStop=/usr/local/lib/cleft-bot/sheldon-egress-guard.sh remove
+
+[Install]
+WantedBy=multi-user.target

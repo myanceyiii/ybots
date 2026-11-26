@@ -1,0 +1,17 @@
+# Sheldon's allow-list: one extended regular expression per line, matched against the host name.
+# Copy to /etc/cleft-bot/silo/sheldon/allowlist on the host and edit there (compose mounts it).
+# Anything not listed is refused. Keep it to what the work needs.
+
+# The firm's ChatGPT (model sign-in, the web app and its assets)
+(^|\.)chatgpt\.com$
+(^|\.)openai\.com$
+(^|\.)oaistatic\.com$
+(^|\.)oaiusercontent\.com$
+
+# Microsoft 365 sign-in and mail/calendar/files, if Sheldon is given them
+^login\.microsoftonline\.com$
+^login\.live\.com$
+^graph\.microsoft\.com$
+^outlook\.office\.com$
+^outlook\.office365\.com$
+(^|\.)sharepoint\.com$

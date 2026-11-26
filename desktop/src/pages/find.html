@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
+<title>Find</title>
+<link rel="stylesheet" href="find.css">
+</head>
+<body>
+<form class="find" id="form" role="search">
+  <input id="q" type="text" placeholder="Find on this page" aria-label="Find on this page" autocomplete="off" spellcheck="false">
+  <span id="count" aria-live="polite"></span>
+  <button type="button" id="prev" title="Previous (Shift+Enter)" aria-label="Previous match">&#x2191;</button>
+  <button type="button" id="next" title="Next (Enter)" aria-label="Next match">&#x2193;</button>
+  <button type="button" id="close" title="Close (Esc)" aria-label="Close find">&#x2715;</button>
+</form>
+<script src="find.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+# Paths left out of the public copy (scripts/public/export.sh). They are the maintainer's own
+# operations: their build machines, backup target, deploy kit and the bots' maintainer skill. A public
+# install uses INSTALL.md instead. One path per line, relative to the repo root; a trailing / is a folder.
+deploy/howard/
+deploy/household-skills/
+deploy/backup/
+scripts/release/
+scripts/release-windows.sh
+scripts/maintainer/
+docs/backup.md
+docs/howard-maintainer.md
+docs/cluster-mcp.md

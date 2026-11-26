@@ -1,0 +1,21 @@
+main.settings { max-width: 520px; padding-top: 32px; }
+.switch b { display: block; font-weight: 500; color: var(--ink); font-size: 15px; }
+.switch small { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }
+.switch { cursor: pointer; }
+.switch input { accent-color: var(--ink); cursor: pointer; }
+.note { display: flex; align-items: center; gap: 10px; background: var(--fill); border-radius: 12px; padding: 10px 12px; font-size: 14px; color: var(--ink); }
+.note span { flex: 1; }
+button.small { height: 34px; padding: 0 12px; font-size: 14px; align-self: flex-start; }
+.note button.small { align-self: center; flex: none; }
+.shortcut #shortcut { flex: 1; font-family: ui-monospace, Consolas, monospace; letter-spacing: 0.02em; }
+.shortcut #shortcut.recording { border-color: var(--ink); background: var(--fill); }
+.shortcut #shortcut-clear { flex: none; height: 46px; }
+.path { font-size: 14px; color: var(--ink); word-break: break-all; background: var(--fill); border-radius: 10px; padding: 10px 12px; }
+#shortcut-error:empty { display: none; }
+.switch { display: flex; gap: 12px; align-items: flex-start; }
+.switch input { width: 18px; height: 18px; margin: 2px 0 0; padding: 0; border-radius: 4px; flex: none; }
+.switch input:disabled + span { opacity: 0.5; }
+.zoom-row { display: flex; gap: 8px; align-items: center; margin: 10px 0; }
+.zoom-row .grow { flex: 1; display: flex; flex-direction: column; }
+.zoom-row .grow small { color: var(--muted); font-size: 13px; }
+button.small { height: 32px; min-width: 44px; padding: 0 10px; flex: none; }

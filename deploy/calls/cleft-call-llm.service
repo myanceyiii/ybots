@@ -1,0 +1,24 @@
+[Unit]
+Description=YBots phone calls: small local model on the CPU (Ollama, 127.0.0.1:11434)
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/ollama serve
+Environment=OLLAMA_HOST=127.0.0.1:11434
+Environment=OLLAMA_MODELS=/var/lib/cleft-call-llm/models
+Environment=HOME=/var/lib/cleft-call-llm
+Environment=OLLAMA_NUM_PARALLEL=1
+Environment=OLLAMA_MAX_LOADED_MODELS=1
+DynamicUser=yes
+StateDirectory=cleft-call-llm
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+CPUQuota=400%
+MemoryMax=4G
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

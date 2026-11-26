@@ -1,0 +1,49 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- AssistRecognitionService hands speech recognition on to the phone's own recognizer, so it must see them. -->
+  <queries>
+    <intent>
+      <action android:name="android.speech.RecognitionService" />
+    </intent>
+  </queries>
+  <application>
+    <!-- The phone's assistant: picked by the person in Android's "Default digital assistant app" screen. -->
+    <service
+      android:name="com.yancey.cleftassist.AssistService"
+      android:permission="android.permission.BIND_VOICE_INTERACTION"
+      android:exported="true">
+      <meta-data android:name="android.voice_interaction" android:resource="@xml/cleft_assist_service" />
+      <intent-filter>
+        <action android:name="android.service.voice.VoiceInteractionService" />
+      </intent-filter>
+    </service>
+    <service
+      android:name="com.yancey.cleftassist.AssistSessionService"
+      android:permission="android.permission.BIND_VOICE_INTERACTION"
+      android:exported="true" />
+    <service
+      android:name="com.yancey.cleftassist.AssistRecognitionService"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.speech.RecognitionService" />
+        <category android:name="android.intent.category.DEFAULT" />
+      </intent-filter>
+      <meta-data android:name="android.speech" android:resource="@xml/cleft_assist_recognizer" />
+    </service>
+    <!-- The card at the bottom of the screen. Its own task, kept out of Recents; ASSIST also reaches it on
+         phones (or launchers) that send the plain assist intent instead of using the service. -->
+    <activity
+      android:name="com.yancey.cleftassist.AssistActivity"
+      android:theme="@style/CleftAssistTheme"
+      android:exported="true"
+      android:excludeFromRecents="true"
+      android:taskAffinity="${applicationId}.assist"
+      android:launchMode="singleTask"
+      android:windowSoftInputMode="adjustResize"
+      android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode">
+      <intent-filter>
+        <action android:name="android.intent.action.ASSIST" />
+        <category android:name="android.intent.category.DEFAULT" />
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>

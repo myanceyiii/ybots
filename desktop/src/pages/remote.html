@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Use this PC</title>
+<link rel="stylesheet" href="page.css">
+<link rel="stylesheet" href="remote.css">
+</head>
+<body>
+<main>
+  <h1>Let YBots use this PC</h1>
+  <p>Your bots can then work in the folders you share here, and you can watch this screen, or take control of it, from your phone or the web. Anything that changes this PC needs your approval on a card, every time.</p>
+
+  <section class="card" id="status-card">
+    <div class="status"><span class="dot" id="dot"></span><b id="status">…</b></div>
+    <p class="hint" id="device"></p>
+    <div class="row">
+      <button type="button" id="pair">Pair this PC</button>
+      <button type="button" id="toggle" hidden>Turn off</button>
+    </div>
+  </section>
+
+  <section class="card" id="pair-card" hidden>
+    <h2>Pair with your phone</h2>
+    <ol>
+      <li>On your phone, open the YBots app, then your account menu › Your PCs › <b>Scan the QR code</b>, and scan this code. (Or scan it with the phone's camera to answer in a browser where you are signed in to YBots.)</li>
+      <li>Check that the code on your phone matches <b id="pair-code">…</b>, then tap <b>Allow</b>.</li>
+    </ol>
+    <div class="qr" id="pair-qr" role="img" aria-label="Pairing QR code"></div>
+    <p class="hint" id="pair-status"></p>
+    <div class="error" id="pair-error" role="alert"></div>
+    <button type="button" class="secondary" id="pair-cancel">Cancel</button>
+  </section>
+
+  <section class="card" id="settings" hidden>
+    <h2>Shared folders</h2>
+    <p class="hint">Bots can only see and change files inside these. Nothing else on this PC.</p>
+    <ul class="list" id="folders"></ul>
+    <button type="button" class="secondary" id="add-folder">Share a folder…</button>
+
+    <h2>What bots may do</h2>
+    <label class="switch"><input type="checkbox" id="commands"> <span>Allow commands (PowerShell). Each one still needs your approval.</span></label>
+    <label class="switch"><input type="checkbox" id="screen"> <span>Allow screen viewing from your phone or the web. A bar shows while anyone watches.</span></label>
+    <label class="switch"><input type="checkbox" id="control"> <span>Let you take control of the mouse and keyboard from your phone or the web. Only you, never a bot. The bar says so, and Stop ends it.</span></label>
+    <label class="switch"><input type="checkbox" id="clipboard"> <span>Allow copy and paste while you have control: text only, and only when you press Copy or Paste on your phone or the web. Never a bot, never in the background. The bar says so.</span></label>
+
+    <h2>Blocked bots</h2>
+    <p class="hint">This PC refuses these bots even if the server asks.</p>
+    <input id="blocked" autocomplete="off" spellcheck="false" placeholder="Sheldon">
+    <button type="button" class="secondary" id="save-blocked">Save blocked bots</button>
+    <span class="hint" id="blocked-saved" role="status"></span>
+  </section>
+
+  <section class="card" id="log-card" hidden>
+    <h2>Recent activity</h2>
+    <ul class="list log" id="log"></ul>
+    <div class="row">
+      <button type="button" class="secondary" id="clear-log">Clear this list</button>
+      <button type="button" class="secondary danger" id="forget">Forget this pairing</button>
+    </div>
+  </section>
+
+  <div class="error" id="error" role="alert"></div>
+  <button type="button" class="secondary" id="back">Back to YBots</button>
+</main>
+<script src="remote.js"></script>
+</body>
+</html>

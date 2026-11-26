@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YBots settings</title>
+<link rel="stylesheet" href="page.css">
+<link rel="stylesheet" href="settings.css">
+</head>
+<body>
+<main class="settings">
+  <h1>Settings for this PC</h1>
+  <p>These belong to the YBots app on this computer. Your bots, theme and account settings are in the app itself, under your account menu.</p>
+
+  <section class="card">
+    <h2>General</h2>
+    <label class="switch"><input type="checkbox" id="startAtLogin"> <span><b>Start when I sign in to Windows</b><small>It starts in the tray, by the clock, so replies and approvals reach you.</small></span></label>
+    <label class="switch"><input type="checkbox" data-key="closeToTray"> <span><b>Keep running when I close the window</b><small>Closing hides it in the tray. Turn this off to quit when the window closes.</small></span></label>
+    <label class="switch"><input type="checkbox" data-key="spellcheck"> <span><b>Check my spelling as I type</b><small>Right-click an underlined word for suggestions.</small></span></label>
+    <div class="zoom-row"><span class="grow"><b>Text size</b><small>Also Ctrl and + or −, or Ctrl and the mouse wheel.</small></span>
+      <button type="button" class="secondary small" data-action="zoom-out" aria-label="Smaller">−</button>
+      <button type="button" class="secondary small" data-action="zoom-reset" id="zoom" title="Back to 100%">100%</button>
+      <button type="button" class="secondary small" data-action="zoom-in" aria-label="Larger">+</button>
+    </div>
+    <label class="switch"><input type="checkbox" data-key="hardwareAcceleration"> <span><b>Use graphics acceleration</b><small>Turn off only if the window shows blank, flickers or looks blurry.</small></span></label>
+    <div class="note" id="restart-note" hidden><span>Restart YBots to apply this.</span><button type="button" class="secondary small" data-action="restart">Restart now</button></div>
+  </section>
+
+  <section class="card">
+    <h2>Notifications</h2>
+    <label class="switch"><input type="checkbox" data-key="notifications.enabled"> <span><b>Show notifications</b><small>A reply, a bot waiting for your answer, finished work. Clicking one opens that chat.</small></span></label>
+    <label class="switch"><input type="checkbox" data-key="notifications.sound"> <span><b>Play a sound</b></span></label>
+    <label class="switch"><input type="checkbox" data-key="notifications.badge"> <span><b>Show a count on the taskbar button</b><small>How many chats have something new or are waiting for you.</small></span></label>
+    <label class="switch"><input type="checkbox" data-key="notifications.flash"> <span><b>Flash the taskbar button</b><small>Briefly, when something new arrives and the window is not in front.</small></span></label>
+    <div class="note" id="paused-note" hidden><span id="paused-text">Notifications are paused.</span><button type="button" class="secondary small" id="resume">Turn back on</button></div>
+    <p class="hint" id="toast-note"></p>
+    <button type="button" class="secondary" data-action="test-notification">Send a test notification</button>
+  </section>
+
+  <section class="card">
+    <h2>Quick Chat</h2>
+    <p class="hint">A small window that opens over whatever you are doing. Pick a bot, type, press Enter.</p>
+    <label class="switch"><input type="checkbox" data-key="quickChat.enabled"> <span><b>Open Quick Chat with a keyboard shortcut</b></span></label>
+    <div class="row shortcut">
+      <button type="button" class="secondary" id="shortcut" aria-describedby="shortcut-help">…</button>
+      <button type="button" class="secondary small" id="shortcut-clear">Remove</button>
+    </div>
+    <p class="hint" id="shortcut-help">Click the shortcut, then press the keys you want. Use Ctrl, Alt or the Windows key with one more key.</p>
+    <div class="error" id="shortcut-error" role="alert"></div>
+    <button type="button" class="secondary" data-action="quick-chat">Open Quick Chat now</button>
+  </section>
+
+  <section class="card">
+    <h2>Talk to a Bot</h2>
+    <p class="hint">Like the assistant button on a phone: opens Leonard's chat (or your main Bot's) and starts listening. What you say goes in the message box; nothing is sent until you press Send.</p>
+    <label class="switch"><input type="checkbox" data-key="talk.enabled"> <span><b>Talk with a keyboard shortcut</b></span></label>
+    <div class="row shortcut">
+      <button type="button" class="secondary" id="talk-shortcut" aria-describedby="shortcut-help">…</button>
+      <button type="button" class="secondary small" id="talk-shortcut-clear">Remove</button>
+    </div>
+    <div class="error" id="talk-shortcut-error" role="alert"></div>
+    <button type="button" class="secondary" data-action="talk">Talk now</button>
+  </section>
+
+  <section class="card">
+    <h2>Downloads</h2>
+    <label class="switch"><input type="checkbox" data-key="downloads.ask"> <span><b>Ask where to save each file</b><small>Off: files go straight to the folder below.</small></span></label>
+    <p class="path" id="downloads-folder"></p>
+    <div class="row">
+      <button type="button" class="secondary" data-action="pick-downloads">Change folder…</button>
+      <button type="button" class="secondary" data-action="open-downloads">Open folder</button>
+    </div>
+    <button type="button" class="secondary small" id="reset-downloads" data-action="reset-downloads" hidden>Use my Downloads folder again</button>
+  </section>
+
+  <section class="card">
+    <h2>Let YBots use this PC</h2>
+    <p class="hint" id="remote-status"></p>
+    <button type="button" class="secondary" data-action="open-remote">Shared folders, screen and commands…</button>
+  </section>
+
+  <section class="card">
+    <h2>Updates</h2>
+    <label class="switch"><input type="checkbox" data-key="updates.auto"> <span><b>Get new versions automatically</b><small>Downloaded in the background and used the next time you start YBots.</small></span></label>
+    <p class="hint" id="update-status"></p>
+    <p class="hint" id="update-notes" hidden></p>
+    <div class="row">
+      <button type="button" class="secondary" data-action="check-updates" id="check-updates">Check now</button>
+      <button type="button" data-action="restart-to-update" id="restart-to-update" hidden>Restart to update</button>
+    </div>
+    <p class="hint">New versions come from your own YBots server and are checked against the build server's signature before they are used. The app never restarts by itself.</p>
+  </section>
+
+  <section class="card">
+    <h2>About and help</h2>
+    <p class="hint" id="about"></p>
+    <div class="row">
+      <button type="button" class="secondary" data-action="copy-diagnostics" id="copy-diag">Copy diagnostics</button>
+      <button type="button" class="secondary" data-action="open-logs">Open the log folder</button>
+    </div>
+    <div class="row">
+      <button type="button" class="secondary" data-action="change-address">Change YBots address…</button>
+      <button type="button" class="secondary" data-action="sign-out">Sign out…</button>
+    </div>
+    <p class="hint">Diagnostics list the version, your settings here and recent errors. They never include messages, sign-in links or keys.</p>
+  </section>
+
+  <div class="error" id="error" role="alert"></div>
+  <button type="button" id="done">Done</button>
+</main>
+<script src="settings.js"></script>
+</body>
+</html>

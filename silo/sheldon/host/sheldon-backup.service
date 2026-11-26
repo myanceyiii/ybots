@@ -1,0 +1,11 @@
+[Unit]
+Description=Cleft Bot: encrypted backup of Sheldon's volume to the private GitHub repository
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Edit the path if the repository lives elsewhere.
+ExecStart=/opt/hq/bot-hq-local/silo/sheldon/host/backup.sh
+Nice=10
+IOSchedulingClass=idle

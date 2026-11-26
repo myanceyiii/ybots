@@ -1,0 +1,1 @@
+{ "name": "plain-plugin", "version": "1.0.0", "description": "Test plugin", "type": "module", "main": "server.mjs" }

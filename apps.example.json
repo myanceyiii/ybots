@@ -1,0 +1,37 @@
+{
+  "apps": [
+    {
+      "id": "m365",
+      "name": "Microsoft 365",
+      "description": "Outlook mail and calendar, OneDrive, Teams",
+      "command": "npx",
+      "args": ["-y", "@softeria/ms-365-mcp-server", "--org-mode"],
+      "env": {
+        "MS365_MCP_CLIENT_ID": "${MS365_CLIENT_ID}",
+        "MS365_MCP_TENANT_ID": "${MS365_TENANT_ID}",
+        "MS365_MCP_TOKEN_CACHE_PATH": "${HOME}/.cleft-bot/m365-token-cache.json",
+        "MS365_MCP_SELECTED_ACCOUNT_PATH": "${HOME}/.cleft-bot/m365-account.json"
+      },
+      "allow": ["list-*", "get-*", "search-*"],
+      "block": ["delete-*"]
+    },
+    {
+      "id": "files",
+      "name": "Case files",
+      "description": "Read-only access to the shared case folder",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/srv/case-files"],
+      "allow": ["read_*", "list_*", "search_files", "get_file_info", "directory_tree"],
+      "block": ["write_file", "edit_file", "move_file", "create_directory"]
+    },
+    {
+      "id": "cms",
+      "name": "Case management",
+      "description": "Your own MCP server over the case-management system's API",
+      "url": "http://127.0.0.1:3101/mcp",
+      "headers": { "Authorization": "Bearer ${CMS_MCP_TOKEN}" },
+      "ask": ["*"],
+      "enabled": false
+    }
+  ]
+}
