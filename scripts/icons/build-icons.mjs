@@ -9,7 +9,7 @@
  * plus the master art in assets/brand/.
  *
  * Dev-time only: needs Playwright's Chromium to turn SVG into PNG. The outputs are committed.
- *   node scripts/icons/build-icons.mjs
+ *   node scripts/icons/build-icons.mjs [--design <design.mjs>] [--out <folder>]
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,25 +17,14 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
-const out = (p) => path.join(root, p);
 
-// ---- The design, in a 512 x 512 box. `motif` is the picture without its background; `mono` is the
-// same outline in one colour (white with holes) for Android's themed icons. --------------------------
-const INK = '#1C1C1C';
-const GRAD = '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFC75A"/><stop offset="1" stop-color="#F08A24"/></linearGradient></defs>';
-const Y = (c) => `
-  <path d="M138 128 L256 270 L374 128" stroke="${c}" stroke-width="70" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-  <path d="M256 262 V392" stroke="${c}" stroke-width="70" stroke-linecap="round"/>
-  <ellipse cx="228" cy="114" rx="21" ry="28" fill="${c}"/><ellipse cx="284" cy="114" rx="21" ry="28" fill="${c}"/>`;
-const D = {
-  name: 'YBots',
-  bg: '#F5A63F', // flat stand-in for the gradient (manifest colours)
-  bgSvg: `${GRAD}<rect width="512" height="512" fill="url(#g)"/>`,
-  motif: Y(INK), // a bold Y whose fork holds two eyes
-  mono: Y('#fff'),
-  // Centre of the motif's bounding box, so scaled copies stay centred.
-  cx: 256, cy: 260,
-};
+// ---- The design lives in its own module (default scripts/icons/design.mjs) so the public copy can carry
+// a different one: `--design <file>` picks another, `--out <folder>` writes under another root.
+const arg = (name) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : undefined; };
+const designFile = path.resolve(arg('--design') ?? path.join(root, 'scripts/icons/design.mjs'));
+const outRoot = path.resolve(arg('--out') ?? root);
+const out = (p) => path.join(outRoot, p);
+const { D } = await import(designFile);
 
 const svg = (body, { round = 0 } = {}) => {
   const clip = round ? `<defs><clipPath id="r"><rect width="512" height="512" rx="${round}"/></clipPath></defs>` : '';
@@ -50,7 +39,7 @@ const maskable = svg(D.bgSvg + scaled(D.motif, 0.8));         // web maskable: i
 // Android adaptive layers are 108dp with a 66dp safe circle: the motif fills about 60% of what shows.
 const foreground = svg(scaled(D.motif, 0.62));
 const mono = svg(scaled(D.mono, 0.62));
-const splash = svg(`<g transform="translate(64 64) scale(0.75)">${GRAD}<rect width="512" height="512" rx="112" fill="url(#g)"/>${scaled(D.motif, 1.08)}</g>`); // the rounded tile, centred
+const splash = svg(`<g transform="translate(64 64) scale(0.75)"><defs><clipPath id="s"><rect width="512" height="512" rx="112"/></clipPath></defs><g clip-path="url(#s)">${D.bgSvg}${scaled(D.motif, 1.08)}</g></g>`); // the rounded tile, centred
 
 // ---- Render ---------------------------------------------------------------------------------------
 const { chromium } = require('playwright');
@@ -78,10 +67,8 @@ function ico(pngs) {
 const write = (p, data) => { fs.mkdirSync(path.dirname(out(p)), { recursive: true }); fs.writeFileSync(out(p), data); console.log('wrote', p); };
 
 // Master art.
-write('assets/brand/yanceybot-icon.svg', full);
-write('assets/brand/yanceybot-icon-rounded.svg', rounded);
-write('assets/brand/yanceybot-foreground.svg', foreground);
-write('assets/brand/yanceybot-monochrome.svg', mono);
+const masters = D.masters ?? ['icon', 'icon-rounded', 'foreground', 'monochrome'].map((k) => `assets/brand/yanceybot-${k}.svg`);
+[full, rounded, foreground, mono].forEach((art, i) => write(masters[i], art));
 write('assets/icon.svg', rounded);
 
 // Web.

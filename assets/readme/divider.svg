@@ -1,0 +1,3 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="24" viewBox="0 0 1200 24" role="img" aria-labelledby="t d"><title id="t">Section divider</title><desc id="d">A thin line with three joined dots.</desc>
+<path d="M0 12 H570 M630 12 H1200" stroke="#8B95A3" stroke-opacity=".45" stroke-width="1.5"/><path d="M578 6 L600 14 L622 6" stroke="#8B95A3" stroke-width="2" fill="none" stroke-linecap="round"/><circle cx="578" cy="6" r="4" fill="#C6F432"/><circle cx="622" cy="6" r="4" fill="#8B95A3"/><circle cx="600" cy="19" r="4" fill="#8B95A3"/>
+</svg>

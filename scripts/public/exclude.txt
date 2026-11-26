@@ -10,3 +10,9 @@ scripts/maintainer/
 docs/backup.md
 docs/howard-maintainer.md
 docs/cluster-mcp.md
+# The public look replaces these (see scripts/public/overlay/).
+scripts/public/overlay/
+assets/brand/yanceybot-icon.svg
+assets/brand/yanceybot-icon-rounded.svg
+assets/brand/yanceybot-foreground.svg
+assets/brand/yanceybot-monochrome.svg

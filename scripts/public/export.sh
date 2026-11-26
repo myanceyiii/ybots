@@ -3,9 +3,11 @@
 # in scripts/public/exclude.txt, checked by scripts/public/check.sh, committed as ONE fresh commit with
 # no history. It never pushes; you look at it, then push it yourself to the public repository.
 #
-#   scripts/public/export.sh --deny <deny-list file> --out <empty folder> [--ref <commit>] [--test]
+#   scripts/public/export.sh --deny <deny-list file> --out <empty folder> [--ref <commit>] [--patch <file>]... [--test]
 #
 #   --deny   deny list kept outside the repo (names, hostnames, addresses), see check.sh
+#   --patch  a `git diff --binary` patch applied to the copy (e.g. to leave out a private feature); kept
+#            outside the repo like the deny list. The export stops if it no longer applies.
 #   --out    where the public copy goes (must not exist yet)
 #   --ref    commit to export (default HEAD; uncommitted changes are never included)
 #   --test   also run `npm ci`, `npm run build` and `npm test` in the copy, as a new user would
@@ -13,26 +15,42 @@
 # Then:  cd <out> && git remote add origin git@github.com:<you>/<public repo>.git && git push -u origin main
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-REF=HEAD; DENY=; OUT=; TEST=0
+REF=HEAD; DENY=; OUT=; TEST=0; PATCHES=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --deny) DENY=$2; shift 2 ;; --out) OUT=$2; shift 2 ;; --ref) REF=$2; shift 2 ;; --test) TEST=1; shift ;;
+    --patch) PATCHES+=("$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"); shift 2 ;;
     *) echo "unknown option $1"; exit 2 ;;
   esac
 done
-[ -n "$DENY" ] && [ -n "$OUT" ] || { sed -n '2,14p' "$0"; exit 2; }
+[ -n "$DENY" ] && [ -n "$OUT" ] || { sed -n '2,16p' "$0"; exit 2; }
 [ -e "$OUT" ] && { echo "$OUT already exists; give a new folder"; exit 2; }
 DENY=$(cd "$(dirname "$DENY")" && pwd)/$(basename "$DENY")
 case "$DENY" in "$ROOT"/*) echo "keep the deny list outside the repository"; exit 2 ;; esac
 
 mkdir -p "$OUT"
 git -C "$ROOT" archive --format=tar "$REF" | tar -x -C "$OUT"
+# The public copy has its own look: files in scripts/public/overlay/ replace the same paths in the copy
+# (app icons drawn from its own scripts/icons/design.mjs). The overlay folder itself is then left out.
+if [ -d "$OUT/scripts/public/overlay" ]; then
+  cp -a "$OUT/scripts/public/overlay/." "$OUT/"
+  echo "== applied the public overlay ($(find "$OUT/scripts/public/overlay" -type f | wc -l) files)"
+fi
 while IFS= read -r p; do
   case "$p" in ''|'#'*) continue ;; esac
   rm -rf "${OUT:?}/${p%/}"
 done < "$ROOT/scripts/public/exclude.txt"
 # The household-skills folder is gitignored except its README, which points at private files.
 rm -rf "$OUT/deploy/household-skills"
+for p in "${PATCHES[@]}"; do
+  (cd "$OUT" && git apply --binary --whitespace=nowarn "$p") || { echo "FAIL: $p no longer applies to $REF; make it again"; exit 1; }
+  echo "== applied $(basename "$p")"
+done
+# The private app's theme colour, where it is written out by hand, becomes the public look's colour.
+if [ -f "$OUT/scripts/public/theme-color" ]; then
+  theme=$(tr -d '[:space:]' < "$OUT/scripts/public/theme-color")
+  sed -i "s/#F5A63F/$theme/g" "$OUT/web/index.html" "$OUT/mobile/app.config.ts"
+fi
 echo "== exported $(git -C "$ROOT" rev-parse --short "$REF") to $OUT"
 
 bash "$ROOT/scripts/public/check.sh" "$OUT" "$DENY"
