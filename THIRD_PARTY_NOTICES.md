@@ -60,7 +60,9 @@ The "Sign in with Google" button shows Google's "G" mark, which is a trademark o
 
 ## Original artwork
 
-The bot characters (`server/src/avatar-shapes.ts`, drawn by `web/src/avatar/BotAvatar.tsx` and on each bot's home screen), the favicon, `assets/icon.svg`, the README banner and the screenshots were made for this project. The characters are built from basic geometry and covered by the project's MIT license.
+The bot characters (`server/src/avatar-shapes.ts`, drawn by `web/src/avatar/BotAvatar.tsx` and on each bot's home screen), the app icons, `assets/icon.svg` and the README art in `assets/readme/` were made for this project. The characters and icons are built from basic geometry and covered by the project's MIT license.
+
+The README art has its text turned into outlines of three fonts under the [SIL Open Font License 1.1](https://openfontlicense.org): [Space Grotesk](https://github.com/floriankarsten/space-grotesk) (Florian Karsten), [Inter](https://github.com/rsms/inter) (Rasmus Andersson) and [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) (JetBrains). The fonts themselves are not bundled. The art is drawn by `scripts/brand/build-readme-art.mjs`; see [docs/brand.md](docs/brand.md).
 
 ## noVNC (phone app)
 

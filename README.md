@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="assets/readme-banner.svg" alt="YBots. Your team. Their own computers." width="100%">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/banner-dark.svg">
+    <img src="assets/readme/banner-light.svg" alt="YBots. Your team of AI agents, on your own machine." width="100%">
+  </picture>
 </p>
 
 <p align="center">
@@ -18,21 +21,22 @@
 </p>
 
 <p align="center">
-  <img alt="Node 22.12 or newer" src="https://img.shields.io/badge/node-%E2%89%A522.12-3c873a">
-  <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-1c1c1c">
-  <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-fd690f">
+  <img alt="Node 22.12 or newer" src="https://img.shields.io/badge/node-%E2%89%A522.12-C6F432?labelColor=0E1116">
+  <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-C6F432?labelColor=0E1116">
+  <img alt="Web, Android and Windows" src="https://img.shields.io/badge/apps-web%20%C2%B7%20android%20%C2%B7%20windows-5CC8FF?labelColor=0E1116">
+  <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-FF7A59?labelColor=0E1116">
 </p>
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/chat-dark.png">
-    <img src="assets/screenshots/chat-light.png" alt="A chat with a bot. The bot's steps are listed while it works, and the side panel shows its screen, routines, model and voice settings." width="100%">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/app-dark.svg">
+    <img src="assets/readme/app-light.svg" alt="Illustration of the app with sample data: a chat with the bot Robin, who asks on an approval card to create a calendar event. The side panel shows Robin's screen, engine, routines and voice settings." width="100%">
   </picture>
 </p>
 
-<sub>Sample data from the dev server (<code>?fixtures</code>), not a real install.</sub>
+<sub>An illustration with sample data, not a real install.</sub>
 
----
+<p align="center"><img src="assets/readme/divider.svg" alt="" width="100%"></p>
 
 Give a bot a job, connect the apps it needs, and follow its work in chat. Every bot is a
 [Hermes Agent](https://github.com/NousResearch/hermes-agent), so it runs on the model subscriptions or API
@@ -61,27 +65,12 @@ rebuilt to run entirely on your own machine. See [NOTICE.md](NOTICE.md).
 
 ## How it fits together
 
-```mermaid
-flowchart LR
-  subgraph Devices
-    W["Web app / PWA"]
-    A["Android app"]
-    D["Windows app"]
-  end
-  subgraph M["Your Linux machine"]
-    S["YBots server<br/>Node · Hono · SQLite"]
-    H1["Hermes gateway<br/>first bot"]
-    H2["Hermes gateway<br/>one per extra bot"]
-    X["Virtual screens<br/>Xvfb · x11vnc · Chrome"]
-    V["Speech server<br/>Speaches (optional)"]
-    P["Local apps and plugins<br/>MCP servers"]
-  end
-  Devices -- "HTTPS + SSE + WebSocket" --> S
-  S -- "/v1/responses" --> H1 & H2
-  H1 & H2 -- "MCP /mcp/&lt;bot&gt;: app tools" --> S
-  S --> X & V & P
-  H1 & H2 -- "model calls" --> LLM[("Your model providers")]
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/architecture-dark.svg">
+    <img src="assets/readme/architecture-light.svg" alt="Your devices talk to the YBots server on your Linux machine. The server runs one Hermes gateway per bot, virtual screens, speech and local apps; the bots reach the app's tools over MCP. Only model calls leave the machine." width="100%">
+  </picture>
+</p>
 
 - **The first bot is the owner's own Hermes agent** (its memory, skills and messaging channels keep
   working). Every other bot gets its own Hermes home, gateway, model, memory, browser profile and files.
@@ -117,6 +106,13 @@ your OK in front of every app action (approval cards bound to the exact action, 
 treats a bot's message as an approval, keeps its agent endpoints on loopback, and signs people in without
 passwords. Run it on a machine of its own, keep it behind HTTPS and a sign-in, and read
 [SECURITY.md](SECURITY.md) first.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/approvals-dark.svg">
+    <img src="assets/readme/approvals-light.svg" alt="A bot asks to act, a card asks you, you allow or deny, and an allowed action runs once, bound to that exact request. A bot message is never an approval." width="100%">
+  </picture>
+</p>
 
 ## Documentation
 
@@ -167,7 +163,7 @@ Nobody has to run a command on the server to sign in day to day:
 grew out of [Orgo Teammates](https://github.com/nickvasilescu/orgo-teammates). Built with
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT), [Speaches](https://speaches.ai),
 [noVNC](https://novnc.com), [Expo](https://expo.dev) and [Electron](https://www.electronjs.org). Bot
-characters, icons and screenshots were made for the project (icons from [Lucide](https://lucide.dev)); app
+characters, icons and README art were made for the project (icons from [Lucide](https://lucide.dev)); app
 logos on cards belong to their owners. See [NOTICE.md](NOTICE.md) and
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 

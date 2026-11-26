@@ -16,7 +16,7 @@ const config: ExpoConfig = {
     package: process.env.YBOTS_ANDROID_PACKAGE || 'com.yancey.cleftbot',
     versionCode: 30,
     adaptiveIcon: {
-      backgroundColor: '#F5A63F',
+      backgroundColor: '#0E1116',
       backgroundImage: `${art}/android-icon-background.png`,
       foregroundImage: `${art}/android-icon-foreground.png`,
       monochromeImage: `${art}/android-icon-monochrome.png`,
