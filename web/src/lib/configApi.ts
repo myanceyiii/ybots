@@ -1,6 +1,9 @@
-import type { Bot, ChatFile, ChatFileEntry, FilePreview, ComputerState, EngineInfo, FallbackChoice, ProviderCheckResult, HermesSkillDetail, HermesSkillList, LibraryFile, Memory, Page, PageOp, PageOpResult, PageShelfItem, PageVersionInfo, ModelUsageSummary, Routine, Skill, Task, Toolkit } from '@shared/types';
+import type { Bot, ChatFile, ChatFileEntry, FilePreview, ComputerState, EngineInfo, FallbackChoice, ProviderCheckResult, HermesSkillDetail, HermesSkillList, LibraryFile, Memory, Page, PageOp, PageShelfItem, PageVersionInfo, ModelUsageSummary, Routine, Skill, TeachDraft, TeachState, Task, Toolkit } from '@shared/types';
 import type { HelperRun, HelperSettings, HelpersView } from '@shared/helpers';
-import { ApiError } from './api';
+import { ApiError, call } from './api';
+
+export type { RemovedTask } from '@shared/types';
+import type { RemovedTask } from '@shared/types';
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api${path}`, {
@@ -65,13 +68,16 @@ export const configApi = {
   markAgentSkillsSeen: (botId: string) => req<{ ok: true }>('POST', `/bots/${botId}/hermes-skills/seen`),
   deleteAgentSkill: (botId: string, name: string) => req<{ ok: true }>('DELETE', `/bots/${botId}/hermes-skills/${encodeURIComponent(name)}`),
 
-  setRoutine: (id: string, enabled: boolean) => req<{ routine: Routine }>('PATCH', `/routines/${id}`, { enabled }),
-  setRoutineQuiet: (id: string, quiet: boolean) => req<{ routine: Routine }>('PATCH', `/routines/${id}`, { quiet }),
-  runRoutine: (id: string) => req<{ ok: true }>('POST', `/routines/${id}/run`),
-  deleteRoutine: (id: string) => req<{ ok: true }>('DELETE', `/routines/${id}`),
+  setRoutine: (id: string, enabled: boolean) => call('PATCH /api/routines/{id}', { id }, { enabled }),
+  setRoutineQuiet: (id: string, quiet: boolean) => call('PATCH /api/routines/{id}', { id }, { quiet }),
+  runRoutine: (id: string) => call('POST /api/routines/{id}/run', { id }),
+  deleteRoutine: (id: string) => call('DELETE /api/routines/{id}', { id }),
 
-  tasks: () => req<{ tasks: Task[] }>('GET', '/tasks'),
-  botTasks: (botId: string) => req<{ tasks: Task[] }>('GET', `/bots/${botId}/tasks`),
+  tasks: () => call('GET /api/tasks'),
+  botTasks: (botId: string) => call('GET /api/bots/{id}/tasks', { id: botId }),
+  editTask: (botId: string, taskId: string, b: { title?: string; note?: string; state?: Task['state'] }) => call('PATCH /api/bots/{id}/tasks/{taskId}', { id: botId, taskId }, b),
+  deleteTask: (botId: string, taskId: string) => call('DELETE /api/bots/{id}/tasks/{taskId}', { id: botId, taskId }),
+  restoreTask: (botId: string, t: RemovedTask) => call('POST /api/bots/{id}/tasks/restore', { id: botId }, t),
 
   files: (botId: string, path = '', wake = false) => req<LibraryListing>('GET', `/bots/${botId}/files?path=${encodeURIComponent(path)}${wake ? '&wake=1' : ''}`),
   downloadFile: (botId: string, path: string) => req<{ url: string }>('POST', `/bots/${botId}/files/download`, { path }),
@@ -79,9 +85,9 @@ export const configApi = {
   filePreview: (botId: string, path: string) => req<FilePreview>('GET', `/bots/${botId}/files/preview?path=${encodeURIComponent(path)}`),
   saveFileText: (botId: string, path: string, text: string, modifiedAt?: number) => req<ChatFile>('PUT', `/bots/${botId}/files/text`, { path, text, modifiedAt }),
   // Pages (server/src/pages.ts).
-  page: (botId: string, path: string) => req<Page>('GET', `/bots/${botId}/pages?path=${encodeURIComponent(path)}`),
+  page: (botId: string, path: string) => call('GET /api/bots/{id}/pages', { id: botId }, undefined, { path }),
   newPage: (botId: string, title: string, markdown?: string) => req<{ path: string; page: Page }>('POST', `/bots/${botId}/pages`, { title, markdown }),
-  pageOps: (botId: string, path: string, ops: PageOp[]) => req<{ page: Page; results: PageOpResult[] }>('POST', `/bots/${botId}/pages/ops`, { path, ops }),
+  pageOps: (botId: string, path: string, ops: PageOp[]) => call('POST /api/bots/{id}/pages/ops', { id: botId }, { path, ops }),
   pageHistory: (botId: string, path: string) => req<{ versions: PageVersionInfo[] }>('GET', `/bots/${botId}/pages/history?path=${encodeURIComponent(path)}`),
   pageVersion: (botId: string, path: string, v: number) => req<Page>('GET', `/bots/${botId}/pages/version?v=${v}&path=${encodeURIComponent(path)}`),
   pageRestore: (botId: string, path: string, version: number | 'undo') => req<Page>('POST', `/bots/${botId}/pages/restore`, version === 'undo' ? { path, undo: true } : { path, version }),
@@ -102,6 +108,13 @@ export const configApi = {
   resetScreen: (botId: string) => req<{ ok: true }>('POST', `/bots/${botId}/screen/reset`),
   /** Tells the bot the person has stopped driving its screen. */
   handback: (botId: string) => req<{ ok: true }>('POST', `/bots/${botId}/handback`),
+  // Teach a bot by showing it (server/src/teach.ts)
+  teach: (botId: string) => req<TeachState>('GET', `/bots/${botId}/teach`),
+  teachStart: (botId: string) => req<TeachState>('POST', `/bots/${botId}/teach/start`),
+  teachStop: (botId: string, note?: string) => req<TeachState>('POST', `/bots/${botId}/teach/stop`, { note: note ?? null }),
+  teachRedraft: (botId: string, id: string, p: { note?: string; remove?: number[] }) => req<TeachState>('POST', `/bots/${botId}/teach/${id}/redraft`, p),
+  teachSave: (botId: string, id: string, d: TeachDraft) => req<{ ok: true; skillName: string }>('POST', `/bots/${botId}/teach/${id}/save`, d),
+  teachDiscard: (botId: string, id: string) => req<{ ok: true }>('POST', `/bots/${botId}/teach/${id}/discard`),
   /** The live screen gave up after its quiet retries: logged on the server so a flaky view can be traced. */
   screenProblem: (botId: string, p: { tries: number; cause: string }) => req<{ ok: true }>('POST', `/bots/${botId}/screen/problem`, { ...p, client: 'web' }),
 

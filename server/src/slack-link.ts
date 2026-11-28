@@ -1,9 +1,11 @@
 import fs from 'node:fs';
 import WebSocket from 'ws';
+import { safeLink } from './safe-url.js';
 import { db, now } from './db.js';
 import { appendRow, emitBot, getBotRow } from './store.js';
 import { checkOutgoing, formatOutgoing, outsideBots, outsideFor, parseIncoming, START, STOP, type OutsideBot } from './outside.js';
 import type { OutsideExchange } from './types.js';
+import { isSilo } from './silo.js';
 
 /**
  * The Slack link for outside members (see outside.ts).
@@ -185,7 +187,8 @@ async function mcpPost(channel: string, text: string, threadTs: string | null): 
   try { j = JSON.parse(txt); } catch {}
   const ts = j?.message_context?.message_ts ?? j?.message_ts ?? j?.ts ?? (txt.match(/\b\d{10}\.\d{6}\b/) ?? [])[0];
   if (!ts) throw new Error('Slack MCP send: no message ts in the reply');
-  return { ts: String(ts), link: j?.message_link ? String(j.message_link) : null };
+  // The link comes from the Slack connector's answer: only an ordinary web link is kept.
+  return { ts: String(ts), link: safeLink(j?.message_link) };
 }
 
 async function permalink(channel: string, ts: string): Promise<string | null> {
@@ -388,7 +391,8 @@ async function deliverIncoming(outsideId: string, o: OutsideBot, ev: any, text: 
   if (!target && p.to) {
     const wanted = o.aliases[p.to.toLowerCase()] ?? p.to;
     const b = db.prepare("SELECT id FROM bots WHERE user_id=? AND lower(name)=lower(?) AND COALESCE(kind,'agent')='agent' AND COALESCE(hidden,0)=0").get(member.user_id, wanted) as any;
-    if (b && b.id !== outsideId) toBotId = b.id;
+    // A siloed bot is never woken from outside, even by name.
+    if (b && b.id !== outsideId && !isSilo(b.id)) toBotId = b.id;
   }
 
   // A top-level post addressed "[Sheldon]>@Leonard Q …" is shown without the header.
@@ -500,19 +504,31 @@ async function connect() {
   socketState = 'connecting';
   try {
     const { url } = await slack('apps.connections.open', appToken, {});
-    ws = new WebSocket(url);
-    ws.on('open', () => { socketState = 'connected'; socketError = null; backoff = 1000; for (const id of allOutsideIds()) emitBot(id); });
-    ws.on('message', (data) => {
+    if (stopped) return;
+    const sock = new WebSocket(url);
+    ws = sock;
+    // A link that drops without a close (sleep, a dead NAT entry) is found by a missed pong and reopened.
+    let alive = true;
+    const beat = setInterval(() => {
+      if (!alive) { sock.terminate(); return; }
+      alive = false;
+      try { sock.ping(); } catch { /* closing */ }
+    }, 30_000);
+    beat.unref();
+    sock.on('pong', () => { alive = true; });
+    sock.on('open', () => { socketState = 'connected'; socketError = null; backoff = 1000; for (const id of allOutsideIds()) emitBot(id); });
+    sock.on('message', (data) => {
+      alive = true;
       let env: any;
       try { env = JSON.parse(String(data)); } catch { return; }
-      if (env.envelope_id) ws?.send(JSON.stringify({ envelope_id: env.envelope_id }));
-      if (env.type === 'disconnect') { ws?.close(); return; }
+      if (env.envelope_id) sock.send(JSON.stringify({ envelope_id: env.envelope_id }));
+      if (env.type === 'disconnect') { sock.close(); return; }
       if (env.type === 'events_api' && env.payload?.event) {
         handleEvent(env.payload.event).catch((e) => console.warn('[slack-link] event failed:', e?.message ?? e));
       }
     });
-    ws.on('close', () => { ws = null; if (socketState === 'connected') socketState = 'connecting'; retry(); });
-    ws.on('error', (e) => { socketError = String((e as any)?.message ?? e); });
+    sock.on('close', () => { clearInterval(beat); if (ws === sock) ws = null; if (socketState === 'connected') socketState = 'connecting'; retry(); });
+    sock.on('error', (e) => { socketError = String((e as any)?.message ?? e); });
   } catch (e: any) {
     socketState = 'error';
     socketError = String(e?.message ?? e);

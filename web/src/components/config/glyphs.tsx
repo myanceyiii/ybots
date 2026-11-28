@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { ArrowLeft, CircleCheck, Download, FileText, Folder, ListChecks, Pencil, Play, Puzzle, Settings, Sparkle, Trash, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, BellRing, CircleCheck, Download, FileText, Folder, ListChecks, Pencil, Play, Puzzle, Settings, Sparkle, Trash, type LucideIcon } from 'lucide-react';
 
 /** Settings/library glyphs, all Lucide (ISC, see THIRD_PARTY_NOTICES.md). `filled` paints the shape solid. */
 const GLYPHS = {
@@ -15,6 +15,7 @@ const GLYPHS = {
   tasks: { icon: ListChecks },
   plugin: { icon: Puzzle },
   pencil: { icon: Pencil },
+  needs: { icon: BellRing },
 } satisfies Record<string, { icon: LucideIcon; filled?: boolean }>;
 
 export type GlyphName = keyof typeof GLYPHS;

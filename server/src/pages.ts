@@ -301,6 +301,12 @@ export function loadPage(botId: string, rel: string, botName = 'The bot'): Page 
   return page;
 }
 
+/** A held-back edit from a hand-edited file: kept only in the shape the server writes. */
+function validAlt(a: any): boolean {
+  return !!a && typeof a === 'object' && !Array.isArray(a) && typeof a.by === 'string' && (a.byKind === 'person' || a.byKind === 'bot')
+    && typeof a.at === 'number' && !!a.fields && typeof a.fields === 'object' && !Array.isArray(a.fields);
+}
+
 /** Re-type every block of a page read from disk, so hand-edited files can't smuggle in odd shapes. */
 function sanitize(page: Page, by: string): Page {
   const seen = new Set<string>();
@@ -311,7 +317,7 @@ function sanitize(page: Page, by: string): Page {
     try { fields = content(b.type as BlockType, b); } catch { continue; } // a calculator the file broke is left out
     const id = typeof b.id === 'string' && /^[\w-]{1,40}$/.test(b.id) && !seen.has(b.id) ? b.id : newBlockId();
     seen.add(id);
-    blocks.push({ id, type: b.type, ...fields, rev: Number(b.rev) || Number(page.version) || 1, by: s(b.by, 100) || by, byKind: b.byKind === 'person' ? 'person' : 'bot', at: Number(b.at) || now(), ...(b.alt ? { alt: b.alt } : {}) } as PageBlock);
+    blocks.push({ id, type: b.type, ...fields, rev: Number(b.rev) || Number(page.version) || 1, by: s(b.by, 100) || by, byKind: b.byKind === 'person' ? 'person' : 'bot', at: Number(b.at) || now(), ...(validAlt(b.alt) ? { alt: b.alt } : {}) } as PageBlock);
   }
   return { cleftPage: 1, id: typeof page.id === 'string' && /^pg_[\w]{4,40}$/.test(page.id) ? page.id : `pg_${crypto.randomBytes(6).toString('hex')}`, title: s(page.title, 200) || 'Untitled page', version: Math.max(1, Number(page.version) || 1), blocks, updatedAt: Number(page.updatedAt) || now() };
 }
@@ -490,7 +496,11 @@ export function applyOps(botId: string, rel: string, ops: PageOp[], by: PageActo
             if (b.rows.length >= 500) throw err('Too many rows');
             const row = (Array.isArray(op.values) ? op.values : []).slice(0, 30).map((v: any) => s(v, 2000));
             b.rows.splice(op.at == null ? b.rows.length : Math.max(0, Math.min(b.rows.length, Number(op.at))), 0, row);
-          } else b.rows.splice(Number(op.at), 1);
+          } else {
+            const at = Number(op.at);
+            if (!Number.isInteger(at) || at < 0 || at >= b.rows.length) throw err('No such row');
+            b.rows.splice(at, 1);
+          }
           stamp(b);
           summaries.push(op.op === 'add_row' ? 'added a table row' : 'removed a table row');
           results.push({ ok: true, id: b.id });

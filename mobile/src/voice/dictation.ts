@@ -99,10 +99,15 @@ export function useDictation(api: Client, handlers: { onStart: () => void; onLiv
     if (isCallActive(getCall())) { cb.current.onError('You are on a voice call. Hang up to dictate.'); return; }
     starting.current = true;
     const downAt = Date.now();
+    let started = false;
     try {
       const p = await requestRecordingPermissionsAsync().catch(() => null);
       if (p && !p.granted) { cb.current.onError('Microphone access is off for this app. Allow it in Android settings to dictate.'); return; }
+      // Asked before the microphone opens: nothing is awaited between opening it and holding it in rec,
+      // so a cancel or a closed screen can never leave it recording with nobody to stop it.
+      const opts = voiceNative.liveDictation && voiceNative.liveStream ? await api.voiceOptions().catch(() => null) : null;
       voiceNative.start('dictate');
+      started = true;
       let live: LiveEngine | null = null;
       let poll: ReturnType<typeof setInterval> | null = null;
       if (voiceNative.liveDictation) {
@@ -111,7 +116,6 @@ export function useDictation(api: Client, handlers: { onStart: () => void; onLiv
           if (!path) return '';
           try { return await transcribe(api, path, cb.current.language); } finally { voiceNative.discard(path); }
         };
-        const opts = voiceNative.liveStream ? await api.voiceOptions().catch(() => null) : null;
         const sock = opts?.live ? api.liveSocket() : null;
         // React Native's WebSocket takes headers as a third argument (not in the DOM typings).
         const WS = WebSocket as unknown as new (url: string, protocols: string[] | undefined, o: { headers: Record<string, string> }) => WebSocket;
@@ -135,6 +139,7 @@ export function useDictation(api: Client, handlers: { onStart: () => void; onLiv
       cb.current.onStart();
       setState('recording');
     } catch (e) {
+      if (started && !rec.current) { try { const p = voiceNative.stop(); if (p) voiceNative.discard(p); } catch { /* not recording */ } }
       cb.current.onError(nativeReason(e, 'Could not open the microphone.'));
       setState('idle');
     } finally {

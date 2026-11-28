@@ -33,7 +33,7 @@ export const humanizeToolkit = (slug: string) => KNOWN[slug.toLowerCase()] ?? sl
 
 // ---------------- approval ----------------
 
-const APPROVAL_OUTCOME: Record<string, string> = { allowed: 'Allowed once', always: 'Always allowed', denied: 'Not allowed', expired: 'Expired' };
+const APPROVAL_OUTCOME: Record<string, string> = { allowed: 'Allowed once', always: 'Always allowed', conversation: 'Allowed for this conversation', denied: 'Not allowed', expired: 'Expired' };
 
 /** An HTML email body as plain text for reading on the card (the server sends `text`, with link addresses; this is for older cards). */
 const mailText = (m: NonNullable<Card<'approval'>['mail']>) => typeof m.text === 'string' ? m.text : !m.html ? m.body : m.body
@@ -75,6 +75,57 @@ function SiteLine({ origin, frameOrigin }: { origin: string; frameOrigin?: strin
 }
 
 /**
+ * A saved-login card (server/src/vault.ts): a Bot asks to sign in with a login someone saved. Only that
+ * person's sign-in can press Sign in (the server checks too); the server types the login into the page.
+ */
+function VaultCard({ body }: { body: Card<'approval'> }) {
+  const v = body.vault!;
+  const { busy, error, run } = useBusy();
+  const scoped = useStore((s) => !!s.user?.scope);
+  const mine = v.forScoped === scoped;
+  const pending = body.status === 'pending';
+  const what = v.fields.length === 2 ? 'username and password' : v.fields[0];
+  return (
+    <div className={`card approval-card browser-card${pending ? '' : ' is-resolved'}`}>
+      <div className="card__head">
+        <IconTile icon={cardIcon(body)} size={44} radius={12} />
+        <div className="card__titles">
+          <div className="card__title">{body.title}</div>
+          <div className="card__sub">The app types it into the page. The bot never sees it.</div>
+        </div>
+      </div>
+      <div className="card__body mail-card">
+        <SiteLine origin={v.origin} frameOrigin={v.frameOrigin} />
+        <div className="mail-card__row"><span className="mail-card__label">Login</span><span>{v.label}{v.userHint ? ` · ${v.userHint}` : ''}{v.savedSite !== v.site ? ` (saved for ${v.savedSite})` : ''}</span></div>
+        <div className="mail-card__row"><span className="mail-card__label">Fills</span><span>The {what}{v.fieldLabels.length ? ` ("${v.fieldLabels.join('", "')}")` : ''}</span></div>
+        {v.why && <div className="mail-card__row"><span className="mail-card__label">For</span><span>{v.why} <em>(the bot's words)</em></span></div>}
+        {v.connectorFirst && <div className="card__note card__note--warn">This is a mail, calendar or money site. Bots use the connected app for this. Sign in only if no connected app covers it, not because one failed.</div>}
+      </div>
+      {pending ? (
+        mine ? (
+          <div className="card__actions">
+            <button type="button" className="btn btn--secondary" disabled={!!busy} onClick={() => run('deny', () => api.approve(body.approvalId, 'deny', body.digest))}>Don't sign in</button>
+            <button type="button" className="btn btn--primary" disabled={!!busy} onClick={() => run('login', () => api.useSavedLogin(body.approvalId, body.digest))}>Sign in</button>
+          </div>
+        ) : (
+          <div className="card__actions">
+            <span className="card__note">This is {v.owner}'s login. Only {v.owner} can press Sign in.</span>
+            <button type="button" className="btn btn--secondary" disabled={!!busy} onClick={() => run('deny', () => api.approve(body.approvalId, 'deny', body.digest))}>Don't sign in</button>
+          </div>
+        )
+      ) : (
+        <div className={`card__outcome is-${body.status}`}>
+          <Icon name={body.status === 'allowed' && v.result?.ok !== false ? 'check' : 'close'} size={12} opacity={0.7} />
+          {body.status === 'denied' ? 'Not signed in' : body.status === 'expired' ? 'Expired' : v.result ? (v.result.ok ? v.result.detail : `Not filled: ${v.result.detail}`) : 'Filling…'}
+          {body.answeredBy && body.status !== 'expired' && ` by ${body.answeredBy}${body.answeredVia ? ` · ${body.answeredVia}` : ''}`}
+        </div>
+      )}
+      {error && <div className="card__error">{error}</div>}
+    </div>
+  );
+}
+
+/**
  * A secure input card (server/src/browser-cards.ts): the person types a password, code or card detail; the app
  * sends it once to the server, which types it into that field of the bot's browser. It is never shown in the
  * chat, kept in this page after sending, or offered to the browser's password manager to save.
@@ -84,8 +135,9 @@ function SecretCard({ body }: { body: Card<'approval'> }) {
   const { busy, error, run } = useBusy();
   const [value, setValue] = useState('');
   const [show, setShow] = useState(false);
+  const [save, setSave] = useState(false);
   const pending = body.status === 'pending';
-  const send = () => run('fill', async () => { const v = value; setValue(''); await api.secretInput(body.approvalId, v, body.digest); });
+  const send = () => run('fill', async () => { const v = value; setValue(''); await api.secretInput(body.approvalId, v, body.digest, save && !!s.canSave); });
   return (
     <div className={`card approval-card browser-card${pending ? '' : ' is-resolved'}`}>
       <div className="card__head">
@@ -122,6 +174,9 @@ function SecretCard({ body }: { body: Card<'approval'> }) {
             />
             {s.masked && <button type="button" className="btn btn--secondary btn--sm" onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button>}
           </div>
+          )}
+          {s.canSave && (
+            <label className="browser-card__save"><input type="checkbox" checked={save} onChange={(e) => setSave(e.target.checked)} disabled={!!busy} /> Save to my logins for {s.site}</label>
           )}
           <div className="card__actions">
             <button type="button" className="btn btn--secondary" disabled={!!busy} onClick={() => run('deny', () => api.approve(body.approvalId, 'deny', body.digest))}>Don't fill</button>
@@ -317,6 +372,7 @@ function PostingPlanCard({ body }: { body: Card<'approval'> }) {
 export function ApprovalCard({ body }: { body: Card<'approval'> }) {
   if (body.postingPlan) return <PostingPlanCard body={body} />;
   if (body.secret) return <SecretCard body={body} />;
+  if (body.vault) return <VaultCard body={body} />;
   if (body.purchase) return <PurchaseCard body={body} />;
   if (body.screenHelp) return <ScreenHelpCard body={body} />;
   return <PlainApprovalCard body={body} />;
@@ -325,13 +381,16 @@ export function ApprovalCard({ body }: { body: Card<'approval'> }) {
 function PlainApprovalCard({ body }: { body: Card<'approval'> }) {
   const { busy, error, run } = useBusy();
   const pending = body.status === 'pending';
-  const decide = (d: 'allow' | 'always' | 'deny') => run(d, () => api.approve(body.approvalId, d, body.digest));
+  const decide = (d: 'allow' | 'always' | 'conversation' | 'deny') => run(d, () => api.approve(body.approvalId, d, body.digest));
   // A card can ask about several actions at once (a batch). They are all listed, because "Always allow" covers each of them.
   const tools = body.tools ?? [body.tool];
   const many = tools.length > 1;
   // Cards made before "Always allow" became per bot carry no flag: offer it whenever the card lists its tools.
   const mail = body.mail;
-  const canAlways = !mail && (body.canAlways ?? tools.length > 0);
+  const handoff = !!body.handoff;
+  const canAlways = !mail && !handoff && (body.canAlways ?? tools.length > 0);
+  // "Allow for this conversation" (server/src/conversation-allows.ts): only where the server offered it.
+  const canConversation = canAlways && !!body.canConversation;
   const name = body.toolkitName ?? (body.toolkit ? humanizeToolkit(body.toolkit) : many ? 'Connected apps' : prettyTool(body.tool));
   return (
     <div className={`card approval-card${pending ? '' : ' is-resolved'}`}>
@@ -339,20 +398,22 @@ function PlainApprovalCard({ body }: { body: Card<'approval'> }) {
         <ToolkitLogo name={name} logo={body.logo} icon={cardIcon(body)} size={44} />
         <div className="card__titles">
           <div className="card__title">{body.title}</div>
-          <div className="card__sub">{name}</div>
+          <div className="card__sub">{name}{body.kindName && !mail && <span className="card__kind">{body.kindName}</span>}</div>
         </div>
       </div>
       {mail && <MailView mail={mail} />}
+      {body.kindSays && !mail && !handoff && !(body.detail ?? '').includes(body.kindSays) && <div className="card__says">{body.kindSays}</div>}
       {many && !mail && <div className="card__body">{tools.map((t) => `• ${prettyTool(t)}`).join('\n')}</div>}
       {body.detail && <div className="card__body">{body.detail}</div>}
       {!mail && <ArgsDetails args={body.args} />}
       {pending ? (
         <>
           <div className="card__actions">
-            <button type="button" className="btn btn--secondary" disabled={!!busy} onClick={() => decide('deny')}>{mail ? "Don't send" : "Don't allow"}</button>
+            <button type="button" className="btn btn--secondary" disabled={!!busy} onClick={() => decide('deny')}>{mail ? "Don't send" : handoff ? "Don't do it" : "Don't allow"}</button>
             {/* Only when every listed tool may have a standing rule; it covers this Bot and these tools only. */}
             {canAlways && <button type="button" className="btn btn--secondary" disabled={!!busy} onClick={() => decide('always')} title="This Bot can do this from now on without asking. Undo it under Settings, Permissions.">{many ? 'Always allow all' : 'Always allow'}</button>}
-            <button type="button" className="btn btn--primary" disabled={!!busy} onClick={() => decide('allow')}>{mail ? 'Send' : 'Allow once'}</button>
+            {canConversation && <button type="button" className="btn btn--secondary" disabled={!!busy} onClick={() => decide('conversation')} title="This Bot can do this again in this conversation without asking. It ends with a new conversation, or Turn off above the message box.">Allow for this conversation</button>}
+            <button type="button" className="btn btn--primary" disabled={!!busy} onClick={() => decide('allow')}>{mail ? 'Send' : handoff ? 'I did it myself' : 'Allow once'}</button>
           </div>
           {body.alwaysNote && !mail && <div className="card__note card__note--warn">⚠ {body.alwaysNote}</div>}
           {error && <div className="card__error">{error}</div>}
@@ -362,6 +423,8 @@ function PlainApprovalCard({ body }: { body: Card<'approval'> }) {
           <Icon name={body.status === 'denied' || body.status === 'expired' || (mail && body.sendResult && !body.sendResult.ok) ? 'close' : 'check'} size={12} opacity={0.7} />
           {mail
             ? body.status === 'denied' ? 'Not sent' : body.status === 'expired' ? 'Expired, not sent' : body.sendResult ? (body.sendResult.ok ? 'Sent' : `Send failed: ${body.sendResult.detail}`) : 'Send pressed'
+            : handoff ? (body.status === 'denied' ? 'Not done' : body.status === 'expired' ? 'Expired' : 'You did it yourself')
+            : body.status === 'conversation' && body.convOff ? 'Allowed for this conversation, then turned off'
             : APPROVAL_OUTCOME[body.status] ?? body.status}
           {body.answeredBy && body.status !== 'expired' && ` by ${body.answeredBy}${body.answeredVia ? ` · ${body.answeredVia}` : ''}`}
         </div>
@@ -518,7 +581,7 @@ export function DraftCard({ body }: { body: Card<'draft'> }) {
   return (
     <div className={`card draft-card${pending ? '' : ' is-resolved'}`}>
       <div className="draft-card__head">
-        <span className="draft-card__tile"><Icon name="chat_filled" size={18} color="#FFFFFF" /></span>
+        <span className="draft-card__tile"><Icon name="chat_filled" size={18} color="var(--color-on-primary)" /></span>
         <div className="draft-card__titles">
           <div className="draft-card__channel">{CHANNEL_LABEL[body.channel] ?? 'Message'}</div>
           <div className="draft-card__from">{handle}</div>

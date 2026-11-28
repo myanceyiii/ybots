@@ -73,7 +73,9 @@ export function listen(api: Client, botId: string, key: string, text: string, on
       if (id !== run) return;
       left--;
       // Dropped before it played: something else took the speaker (a call, dictation).
-      if (!ok) { stopListening(); return; }
+      // Its speaker is someone else's now (a call's greeting may already be queued): forget this read-aloud
+      // without clearing the player.
+      if (!ok) { run++; left = 0; set(null); return; }
       if (cur?.state === 'loading') set({ key, state: 'playing' });
       next(i + 1);
     }, (e) => {

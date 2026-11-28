@@ -17,14 +17,18 @@ export const HERMETIC = [
   'scope', 'systemd-timers', 'systemd-timer-hosts', 'systemd-timers-e2e', 'chat-extras-e2e', 'choices', 'choices-e2e', 'calls-brain', 'tool-refresh-e2e', 'tool-list-restart', 'visuals-level', 'maintainer-finish', 'session-rotation', 'board-pin', 'board-pin-e2e', 'hermes-mcp-tools', 'web-search', 'model-badge-e2e', 'engine-summary', 'update-interrupt-e2e',
   'steering-e2e', 'steer-plugin',
   'foundation-e2e', 'desktop-updates',
-  'events-resume-e2e', 'usage-e2e', 'routine-catchup-e2e',
-  'polish-e2e', 'reply-wait', 'screen-retry', 'card-icon', 'reminders-e2e', 'phone',
+  'events-resume-e2e', 'usage-e2e', 'activity-e2e', 'routine-catchup-e2e',
+  'polish-e2e', 'reply-wait', 'screen-retry', 'card-icon', 'reminders-e2e', 'phone', 'audit-2026-11-27',
+  'chat-colors', 'plugins-e2e', 'routines-quiet-e2e', 'routine-safety-e2e', 'voice-upload', 'tasks-edit-e2e', 'bot-handoffs-e2e', 'checkin-offer-e2e', 'needs-you-e2e', 'teach',
+  'shared-copies', 'app-routes', 'api-contract',
+  'a2ui', 'a2ui-e2e', 'conversation-allows',
 ];
 
 /** Need a real service, a desktop (Xvfb, x11vnc, Chrome), a running server, or are known to be out of date. */
 export const OPT_IN = {
   e2e: 'needs a running server on :8787',
   'connections-web-e2e': 'needs the built web app and Chromium',
+  'a2ui-web-e2e': 'needs the built web app and Chromium',
   'voice-call': 'needs Chrome and a throwaway bot on a running server',
   'local-voice-e2e': 'needs Xvfb, x11vnc, ImageMagick and Chrome',
   'local-computer': 'needs Xvfb and x11vnc',
@@ -40,7 +44,12 @@ export const OPT_IN = {
   'machines-electron-e2e': 'needs Electron and a desktop',
   'engine-fold-web-e2e': 'needs the built web app and Chromium',
   'hide-bot-web-e2e': 'needs the built web app and Chromium',
+  'needs-you-web-e2e': 'needs the built web app and Chromium',
+  'composer-height-web-e2e': 'needs the built web app and Chromium',
   'browser-cards-e2e': 'needs Chromium (Playwright)',
+  'action-kinds-page': 'needs Chromium (Playwright)',
+  'teach-e2e': 'needs Chromium (Playwright)',
+  'vault-e2e': 'needs Chromium (Playwright)',
   'posting-e2e': 'needs Chromium (Playwright); writes /root/bothq/files',
 };
 

@@ -28,7 +28,8 @@ export function setDraftAccount(next: string) {
 export const getDraft = (botId: string) => drafts.get(botId) ?? '';
 export function setDraft(botId: string, text: string) {
   if (text) drafts.set(botId, text.slice(0, 200_000)); else drafts.delete(botId);
-  if (account) writeJsonSoon(file(), () => Object.fromEntries(drafts));
+  // The text is taken now: written later from the live map, a sign-out in between would save {} over it.
+  if (account) { const snap = Object.fromEntries(drafts); writeJsonSoon(file(), () => snap); }
   tell();
 }
 /** Every chat's unsent text, for the "Draft:" line in the bot list. */

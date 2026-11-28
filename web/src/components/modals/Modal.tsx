@@ -29,7 +29,12 @@ export function Modal({ onClose, children, className, label, top }: { onClose: (
     };
     window.addEventListener('keydown', k, true);
     const t = setTimeout(() => {
-      const el = ref.current?.querySelector<HTMLElement>('[autofocus], input, textarea, button');
+      // A field that took focus on its own (React's autoFocus sets no attribute) keeps it; otherwise the
+      // first field, and the close button only when there is nothing else.
+      if (ref.current?.contains(document.activeElement)) return;
+      const el = ref.current?.querySelector<HTMLElement>('[autofocus], input:not([disabled]), textarea:not([disabled]), select:not([disabled])')
+        ?? ref.current?.querySelector<HTMLElement>('button:not(.modal__close):not([disabled])')
+        ?? ref.current?.querySelector<HTMLElement>('button');
       el?.focus();
     });
     return () => {

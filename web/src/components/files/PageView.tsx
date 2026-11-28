@@ -67,8 +67,7 @@ export function PageViewer({ bot, path, onBack, onClose }: { bot: Bot; path: str
   const load = useCallback(async () => {
     try {
       const p = await configApi.page(bot.id, path);
-      const extra = p as Page & { sendTo?: string; sendToTitle?: string };
-      setDest({ sendTo: extra.sendTo, sendToTitle: extra.sendToTitle });
+      setDest({ sendTo: p.sendTo, sendToTitle: p.sendToTitle });
       if (p.version < lastVersion.current) return; // a newer change already arrived
       setPage((old) => {
         // Blocks the bot just changed get a short highlight, so you can see where it is working.

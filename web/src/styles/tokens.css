@@ -131,4 +131,6 @@
   --color-warn-text: #E28600;
   --color-success-bg: #14C3701F;
   --color-success-text: #00BA69;
+  /* Light primary in the dark theme: text and switch knobs on it are dark (a bot's own colour sets its own). */
+  --bot-on-action: var(--color-on-primary);
 }

@@ -11,9 +11,15 @@
     "build": "npm run build -w web && npm run build -w server",
     "start": "npm run start -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
-    "test": "node scripts/run-tests.mjs"
+    "test": "node scripts/run-tests.mjs",
+    "shared:sync": "node scripts/shared-copies.mjs",
+    "api:generate": "node scripts/api/generate.mjs",
+    "api:check": "node scripts/api/generate.mjs --check && node scripts/api/breaking.mjs"
   },
   "engines": {
     "node": ">=22.12"
+  },
+  "devDependencies": {
+    "ts-json-schema-generator": "^2.10.0"
   }
 }

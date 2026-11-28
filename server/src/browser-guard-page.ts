@@ -11,12 +11,18 @@
  *    without ever returning the value;
  *  - notices CAPTCHAs;
  *  - on social sites, for bots with the publish guard on, holds Post / Share / Schedule presses unless the
- *    composer's text matches a caption on an approved posting plan, and holds every one in a dry run.
+ *    composer's text matches a caption on an approved posting plan, and holds every one in a dry run;
+ *  - holds presses that delete, send, share, post or change a password (action-kinds.ts: a button whose label
+ *    starts with the action, Ctrl/Cmd+Enter in a text box, Enter in a box for writing a message) unless the
+ *    person allowed that kind on this site (once, for the conversation, or always). Never while the person has
+ *    taken control of the screen: their own presses are theirs.
  *
  * Page text is data: nothing here follows anything a page says. Kept as plain ES2019 in a string so it
  * runs in any frame; exported functions on `__cleftGuard` are called by the server with Runtime.evaluate
  * in this world.
  */
+import { KIND_BUTTON_SOURCE } from './action-kinds.js';
+
 export const GUARD_WORLD = 'cleft_guard';
 export const GUARD_BINDING = 'cleftGuard';
 
@@ -27,7 +33,7 @@ export const GUARD_SOURCE = String.raw`(() => {
   const clean = (s, n) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, n || 160);
 
   // Words on a control that complete a payment. Conservative: anything that looks like paying is held.
-  const PAY = /\b(place (?:your |my )?order|submit (?:your |my )?order|complete (?:my |your )?(?:purchase|order|payment|checkout)|confirm (?:and pay|& pay|purchase|order|payment|booking and pay)|buy now|buy it now|pay now|pay (?:securely|with|by)|pay\s*(?:[$€£¥]|usd|eur|gbp)\s*\d|^pay$|purchase(?: now)?$|checkout now|1-click|one-click|subscribe(?: now)?$|start (?:my |your )?(?:subscription|membership|paid plan)|upgrade now|donate(?: now)?|book (?:now )?and pay|reserve and pay|send (?:money|payment)|authori[sz]e payment|make (?:a )?payment)\b/i;
+  const PAY = /\b(place (?:your |my )?order|submit (?:your |my )?order|complete (?:my |your )?(?:purchase|order|payment|checkout)|confirm (?:and pay|& pay|purchase|order|payment|booking and pay)|buy now|buy it now|pay now|pay (?:securely|with|by)|pay\s*(?:[$€£¥]|usd|eur|gbp)\s*\d|^pay$|purchase(?: now)?$|checkout now|1-click|one-click|subscribe(?: now)?$|start (?:my |your )?(?:subscription|membership|paid plan)|upgrade now|donate(?: now)?|book (?:now )?and pay|reserve and pay|send (?:money|payment)|send\s*[$€£¥]\s*\d|authori[sz]e payment|make (?:a )?payment)\b/i;
   const WALLET = /\b(paypal|venmo|apple pay|google pay|g pay|shop pay|amazon pay|klarna|afterpay|affirm|link pay)\b/i;
   const PROCESSOR_HOST = /(^|\.)(paypal\.com|paypalobjects\.com|stripe\.com|braintreegateway\.com|braintree-api\.com|adyen\.com|checkout\.com|squareup\.com|square\.site|klarna\.com|afterpay\.com|affirm\.com|pay\.google\.com|shop\.app|authorize\.net|worldpay\.com|cybersource\.com)$/i;
   const CARD_AC = /^cc-(number|csc|exp|exp-month|exp-year|name)$/i;
@@ -184,6 +190,7 @@ export const GUARD_SOURCE = String.raw`(() => {
       shipTo: isTop ? clean(nearText(/^(ship(?:ping)? to|shipping address|deliver(?:y)? to|delivery address)\b/i, 160), 160) : '',
       recurring: recurring ? clean(recurring[0], 40) : '',
       controls: payControls(),
+      kindControls: kindControls(),
       cardFields: hasCardFields(document),
       captcha: hasCaptcha(),
       top: isTop, processor: inProcessor,
@@ -199,6 +206,7 @@ export const GUARD_SOURCE = String.raw`(() => {
   // ---------------------------------------------------------------- holding purchase controls
   let armed = null;   // { key, until } set by the server after the person approves
   let passing = 0;    // a short window in which the approved click's events go through
+  let pubPassing = 0; // the same for an approved Post press: kept apart, so one approval never lets the other kind through
 
   function decide(e, hit) {
     const now = Date.now();
@@ -300,12 +308,12 @@ export const GUARD_SOURCE = String.raw`(() => {
 
   function pubDecide(e, hit) {
     const now = Date.now();
-    if (now < passing) return;
+    if (now < pubPassing) return;
     const texts = composerTexts(hit.el);
     const hashes = texts.map((x) => hash(norm(x)));
     if (!pub.dry) {
       const ok = pub.allow.find((a) => (!a.p || a.p === PLATFORM || (PLATFORM === 'facebook' && a.p === 'instagram')) && hashes.includes(a.h));
-      if (ok) { passing = now + 2500; report({ t: 'published', label: hit.label, origin: location.origin, platform: PLATFORM, h: ok.h }); return; }
+      if (ok) { pubPassing = now + 2500; report({ t: 'published', label: hit.label, origin: location.origin, platform: PLATFORM, h: ok.h }); return; }
     }
     e.preventDefault(); e.stopImmediatePropagation();
     if (e.type === 'click' || e.type === 'submit' || e.type === 'keydown') {
@@ -331,6 +339,115 @@ export const GUARD_SOURCE = String.raw`(() => {
     const sub = e.submitter;
     const hit = sub ? publishTarget(sub) : null;
     if (hit) pubDecide(e, hit);
+  }, true);
+
+  // ---------------------------------------------------------------- holding kinds of action (action-kinds.ts)
+  // Deleting, sending, sharing, posting and changing a password are held whatever the bot's tool rules say,
+  // unless the person allowed that kind on this site: once (armed for one press), for the conversation, or
+  // always. The server pushes what is allowed (setKinds) before every browser step. Paying keeps the purchase
+  // hold above; Post / Share on a social site with the publish guard on keeps the posting plan hold.
+  const KB = ${KIND_BUTTON_SOURCE};
+  const KRE = {};
+  for (const k of Object.keys(KB)) KRE[k] = new RegExp(KB[k], 'i');
+  const KIND_ORDER = ['credentials', 'delete', 'share', 'post', 'send'];
+  const SITE = String(location.hostname || '').toLowerCase().replace(/^www\./, '');
+  let kinds = { control: false, allow: [], once: null };
+  let kindPassing = 0;
+
+  function kindOfLabel(label, el) {
+    const l = clean(label, 120);
+    if (!l) return null;
+    for (const k of KIND_ORDER) {
+      if (!KRE[k].test(l)) continue;
+      // "Comment" and "Reply" alone often open a box: they count only when text is written in their composer.
+      if (KRE.needsText.test(l)) {
+        const scope = el && el.closest && (el.closest('[role=dialog]') || el.closest('form'));
+        if (!scope || !composerTexts(el).length) return null;
+      }
+      return k;
+    }
+    return null;
+  }
+  /** A form that changes a password: the current one and a new one. A sign-up has only a new one. */
+  function changesPassword(el) {
+    const form = el && (el.form || (el.closest && el.closest('form')));
+    return !!(form && form.querySelector('input[autocomplete~="new-password"]') && form.querySelector('input[autocomplete~="current-password"]'));
+  }
+  function kindTarget(t) {
+    const el = controlOf(t);
+    if (!el) return null;
+    // A link that goes somewhere (a "Delete account" settings page) is browsing, not the action.
+    if (el.tagName === 'A' && el.getAttribute('href') && !/^(#|javascript:)/i.test(el.getAttribute('href'))) return null;
+    const label = labelOf(el);
+    let kind = kindOfLabel(label, el);
+    if (!kind) {
+      const submits = el.tagName === 'BUTTON' ? (el.type || 'submit') === 'submit' : el.tagName === 'INPUT' && /^(submit|image)$/i.test(el.type);
+      if (submits && changesPassword(el)) kind = 'credentials';
+    }
+    return kind ? { el, label: label || kind, kind } : null;
+  }
+  function kindControls() {
+    const out = [];
+    for (const b of document.querySelectorAll('button, input[type=submit], input[type=button], [role=button]')) {
+      if (out.length >= 6) break;
+      const l = labelOf(b);
+      const k = l && visible(b) && !b.disabled ? kindOfLabel(l, b) : null;
+      if (k) out.push({ k, l: clean(l, 60) });
+    }
+    return out;
+  }
+  function kindAllowed(kind) { return kinds.allow.some((a) => a.k === kind && a.s === SITE); }
+
+  function kindDecide(e, hit) {
+    const now = Date.now();
+    if (kinds.control) return;
+    if (now < kindPassing) return;
+    const final = e.type === 'click' || e.type === 'submit' || e.type === 'keydown';
+    if (hit.kind !== 'credentials' && kindAllowed(hit.kind)) {
+      if (final) report({ t: 'kind_passed', kind: hit.kind, label: hit.label, origin: location.origin, site: SITE, via: 'standing' });
+      return;
+    }
+    const o = kinds.once;
+    if (hit.kind !== 'credentials' && o && o.until > now && o.k === hit.kind && o.s === SITE) {
+      kinds.once = null; kindPassing = now + 2500;
+      report({ t: 'kind_passed', kind: hit.kind, label: hit.label, origin: location.origin, site: SITE, via: 'once' });
+      return;
+    }
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (final) report({ t: 'kind_held', kind: hit.kind, label: hit.label, origin: location.origin, site: SITE, top: isTop });
+  }
+
+  const otherHold = (t) => !!(purchaseTarget(t) || publishTarget(t));
+  const onKindPointer = (e) => { if (otherHold(e.target)) return; const hit = kindTarget(e.target); if (hit) kindDecide(e, hit); };
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'touchstart', 'touchend', 'click', 'auxclick', 'dblclick']) window.addEventListener(type, onKindPointer, true);
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (otherHold(e.target)) return;
+    let hit = kindTarget(e.target);
+    if (!hit && e.key === 'Enter') {
+      const box = e.target && e.target.closest && e.target.closest('textarea, [contenteditable="true"], [contenteditable=""], [role=textbox], input');
+      if (box) {
+        const words = clean((box.getAttribute('aria-label') || '') + ' ' + (box.getAttribute('placeholder') || '') + ' ' + (box.getAttribute('aria-placeholder') || '') + ' ' + (box.getAttribute('name') || ''), 120);
+        const search = /search|find|filter|look ?up|url|address bar/i.test(words) || (box.getAttribute('type') || '') === 'search' || /^(searchbox|combobox)$/.test(box.getAttribute('role') || '');
+        // Enter in a social site's comment box is the publish hold's when it is on.
+        const pubOwns = onSocial && pub.on;
+        if (!search && !pubOwns && box.tagName !== 'INPUT' && (e.ctrlKey || e.metaKey)) hit = { el: box, label: (e.metaKey ? 'Cmd' : 'Ctrl') + '+Enter in ' + (words || 'a text box'), kind: 'send' };
+        else if (!search && !pubOwns && !e.shiftKey && /\b(message|reply|comment|chat|write a|send a|type a|say something)\b/i.test(words)) hit = { el: box, label: 'Enter in ' + (words || 'a message box'), kind: 'send' };
+        else if (!search) {
+          // Enter in a form field submits the form: held when the form's own button is a kind of action.
+          const form = box.form || (box.closest && box.closest('form'));
+          if (form) for (const b of form.querySelectorAll('button, input[type=submit]')) { const l = labelOf(b); const k = kindOfLabel(l, b) || (changesPassword(b) && (b.type || 'submit') === 'submit' ? 'credentials' : null); if (k) { hit = { el: b, label: l || k, kind: k }; break; } }
+        }
+      }
+    }
+    if (hit) kindDecide(e, hit);
+  }, true);
+  window.addEventListener('submit', (e) => {
+    const sub = e.submitter;
+    if (sub && otherHold(sub)) return;
+    let hit = sub ? kindTarget(sub) : null;
+    if (!hit && e.target && changesPassword(sub || e.target.querySelector('input'))) hit = { el: e.target, label: sub ? labelOf(sub) || 'Change password' : 'Change password', kind: 'credentials' };
+    if (hit) kindDecide(e, hit);
   }, true);
 
   /** What a post composer shows, for the dry run report and the posting status. Never fills anything. */
@@ -433,7 +550,8 @@ export const GUARD_SOURCE = String.raw`(() => {
     hash: (x) => hash(norm(x)),
     setPublish: (state) => { try { const o = typeof state === 'string' ? JSON.parse(state) : state; pub = { on: !!o.on, dry: !!o.dry, allow: Array.isArray(o.allow) ? o.allow.slice(0, 200).map((a) => ({ h: String(a.h), p: String(a.p || '') })) : [] }; } catch (_) {} return true; },
     arm: (key, ms) => { armed = { key: String(key), until: Date.now() + Math.min(Number(ms) || 0, 300000) }; return true; },
-    disarm: () => { armed = null; passing = 0; return true; },
+    disarm: () => { armed = null; passing = 0; pubPassing = 0; kindPassing = 0; if (kinds.once) kinds.once = null; return true; },
+    setKinds: (state) => { try { const o = typeof state === 'string' ? JSON.parse(state) : state; const once = o.once && typeof o.once === 'object' ? { k: String(o.once.k), s: String(o.once.s), until: Date.now() + Math.min(Number(o.once.ms) || 0, 300000) } : (o.keepOnce ? kinds.once : null); kinds = { control: !!o.control, allow: Array.isArray(o.allow) ? o.allow.slice(0, 200).map((a) => ({ k: String(a.k), s: String(a.s) })) : [], once }; } catch (_) {} return true; },
     armed: () => !!(armed && armed.until > Date.now()),
   }) });
 })();`;

@@ -11,7 +11,8 @@ import { isSilo } from './silo.js';
 import { isOutside } from './outside.js';
 import { getBotRow } from './store.js';
 import { runStages, stricter, type Decision } from './plugins/policy.js';
-import { noteRuleUse, ruleFor } from './allow-rules.js';
+import { noteRuleUse } from './allow-rules.js';
+import { standingAllow } from './conversation-allows.js';
 import type { Machine, MachineLogEntry } from './types.js';
 import { checkPaste, ClipboardError, cutUtf8 } from './clipboard.js';
 
@@ -257,9 +258,15 @@ function applyState(link: Link, s: any) {
 export function attachMachineLink(server: Server) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 });
   server.on('upgrade', (req: IncomingMessage, socket, head) => {
-    const url = new URL(req.url ?? '/', 'http://x');
-    if (url.pathname !== LINK_PATH) return; // not ours
-    wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws));
+    try {
+      const url = new URL(req.url ?? '/', 'http://x');
+      if (url.pathname !== LINK_PATH) return; // not ours
+      wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws));
+    } catch (e) {
+      // A malformed handshake must never reach the process-wide exception handler.
+      console.warn('[machines] bad upgrade', String((e as Error)?.message ?? e).slice(0, 200));
+      socket.destroy();
+    }
   });
   setInterval(() => {
     for (const link of links.values()) {
@@ -376,6 +383,8 @@ export function pcToolsFor(botId: string | null) {
 export interface PcCallDeps {
   /** Shows an approval card and waits; fills `meta` with the card's id and digest. */
   requestApproval: (pol: { decision: Decision; key: string; title: string; asks: string[]; ruleLabel?: string }, args: any, meta: { approvalId?: string; digest?: string }) => Promise<'allow' | 'deny' | 'expired' | 'superseded' | string>;
+  /** The chat making the call, whose "Allow for this conversation" answers count. */
+  chatId?: string;
 }
 
 const BLOCKED = 'This bot may not use PCs. Do not try again.';
@@ -407,7 +416,7 @@ export async function runPcTool(userId: string, botId: string, rawName: string, 
   const ruleKey = pcRuleKey(tool.name, row.id);
   const ruleLabel = `PC: ${tool.verb} on ${row.name}`;
   let approval: { id: string; digest: string; rule?: string } | null = null;
-  const ruleId = decision === 'ask' && staged.decision === 'allow' ? ruleFor(botId, ruleKey) : null;
+  const ruleId = decision === 'ask' && staged.decision === 'allow' ? standingAllow(botId, deps.chatId, ruleKey) : null;
   if (ruleId) {
     // The PC still gets a one-time approval bound to this exact call, marked as coming from a rule.
     const id = newId('apr');
@@ -438,11 +447,15 @@ export function machineRoutes(api: Hono<any>) {
     return s ? (db.prepare('SELECT * FROM machines WHERE user_id=? AND revoked_at IS NULL ORDER BY created_at').all(s.user.id) as any[]).filter((m) => visibleTo(m, s.user.id, s.person)) : [];
   };
   const one = (c: any) => mineFor(c).find((m) => m.id === c.req.param('id'));
+  // Which bots may use a PC, removing it and its clipboard are a person's: a script session never reaches them.
+  const personOnly = (c: any) => (c.get('agent') ? c.json({ error: 'Only a person can do this on a PC.' }, 403) : null);
 
   api.get('/machines', (c) => c.json({ machines: mineFor(c).map(describe) }));
 
   // Which bots may use a PC. A bot that can never use PCs (blocked, walled off or outside bots) is refused.
   api.patch('/machines/:id', async (c) => {
+    const refused = personOnly(c);
+    if (refused) return refused;
     const row = one(c);
     if (!row) return c.json({ error: 'not found' }, 404);
     const body = await c.req.json<{ bots?: unknown; name?: unknown }>().catch(() => ({}) as any);
@@ -464,6 +477,8 @@ export function machineRoutes(api: Hono<any>) {
 
   // Remove: the PC's key stops working at once and its link is closed.
   api.delete('/machines/:id', (c) => {
+    const refused = personOnly(c);
+    if (refused) return refused;
     const row = one(c);
     if (!row) return c.json({ error: 'not found' }, 404);
     db.prepare('UPDATE machines SET revoked_at=? WHERE id=?').run(now(), row.id);
@@ -476,12 +491,16 @@ export function machineRoutes(api: Hono<any>) {
 
   // Copy and paste while taking control (machineClipboard above).
   api.get('/machines/:id/clipboard', async (c) => {
+    const refused = personOnly(c);
+    if (refused) return refused;
     const row = one(c);
     if (!row) return c.json({ error: 'not found' }, 404);
     try { c.header('Cache-Control', 'no-store'); return c.json(await machineClipboard(row.id, 'get')); }
     catch (e: any) { return c.json({ error: String(e?.message ?? e).slice(0, 300) }, e instanceof ClipboardError ? (e.status as any) : 502); }
   });
   api.put('/machines/:id/clipboard', async (c) => {
+    const refused = personOnly(c);
+    if (refused) return refused;
     const row = one(c);
     if (!row) return c.json({ error: 'not found' }, 404);
     try {

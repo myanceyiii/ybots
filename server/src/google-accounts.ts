@@ -352,6 +352,12 @@ function ensure(id: string) {
   });
   noteLog(id, `started (permissions ${permissionsFor(id, a.write).join(' ')})`);
   procs.set(id, child);
+  // A program that cannot start (its #! interpreter missing, no permission) gives 'error' and maybe no 'exit':
+  // log it and retry like a stop, instead of an unhandled 'error' event.
+  child.on('error', (e) => {
+    tail = (tail + `\n${String(e?.message ?? e)}`).slice(-600);
+    if (child.exitCode === null && child.pid === undefined) child.emit('exit', null, null);
+  });
   child.on('exit', (code) => {
     if (procs.get(id) === child) procs.delete(id);
     if (stopping.has(id)) { stopping.delete(id); return; }
@@ -374,7 +380,11 @@ function stopServer(id: string): Promise<void> {
   const p = procs.get(id);
   if (!p) return Promise.resolve();
   stopping.add(id);
-  return new Promise((res) => { p.once('exit', () => res()); p.kill('SIGTERM'); setTimeout(() => p.kill('SIGKILL'), 5000).unref(); });
+  return new Promise((res) => {
+    const hard = setTimeout(() => p.kill('SIGKILL'), 5000).unref();
+    p.once('exit', () => { clearTimeout(hard); res(); });
+    p.kill('SIGTERM');
+  });
 }
 
 export function restartServer(id: string): Promise<void> { return stopServer(id).then(() => { stopping.delete(id); ensure(id); }); }

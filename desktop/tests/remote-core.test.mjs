@@ -52,6 +52,16 @@ test('paths: inside is fine; outside, .., links out and relative paths are refus
   assert.throws(() => resolveInside(path.join(shared + '-sibling', 'x'), [shared], { mustExist: false }), /folder does not exist|outside/);
 });
 
+test('a dangling link inside a shared folder is never written through', () => {
+  const target = path.join(outside, `planted-${process.pid}.txt`);
+  const link = path.join(shared, `dangling-${process.pid}.txt`);
+  fs.symlinkSync(target, link);
+  try {
+    assert.throws(() => resolveInside(link, [shared], { mustExist: false }), /link/);
+    assert.equal(fs.existsSync(target), false);
+  } finally { fs.unlinkSync(link); }
+});
+
 test('bots on the block list are refused, whatever their case or spacing', async () => {
   const { ex } = executor({ blocked: () => ['Robin', 'Sheldon'] });
   for (const name of ['Robin', 'robin', ' SHELDON ']) {

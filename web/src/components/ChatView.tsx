@@ -7,6 +7,7 @@ import { displayName, sortedRows, useSelectedBot, useStore } from '../store';
 import { useLayout } from '../lib/useLayout';
 import { useConfigUI } from '../configStore';
 import { Composer } from './Composer';
+import { AllowedHere } from './AllowedHere';
 import { BoardDock } from './BoardDock';
 import { Icon } from './Icon';
 import { Menu } from './Menu';
@@ -95,7 +96,8 @@ export function ChatView() {
   }
 
   const flash = (t: string) => { setToast(t); setTimeout(() => setToast(null), 3000); };
-  const canAttach = bot.kind !== 'room' && !bot.outside;
+  // Groups take files too (the composer and the server allow them); only a member outside the app does not.
+  const canAttach = !bot.outside;
   const hasFiles = (e: React.DragEvent) => [...(e.dataTransfer?.types ?? [])].includes('Files');
   const exportChat = async () => {
     try { const r = await api.exportChat(chatBot.id); downloadText(r.name, r.markdown); flash('Saved the conversation as a file.'); }
@@ -111,7 +113,7 @@ export function ChatView() {
       onDrop={(e) => {
         if (!hasFiles(e)) return;
         e.preventDefault(); dragDepth.current = 0; setDropping(false);
-        if (!canAttach) { flash(bot.kind === 'room' ? 'A group chat takes words only. Send the file to one Bot in its own chat.' : `${bot.name} is outside the app and takes words only.`); return; }
+        if (!canAttach) { flash(`${bot.name} is outside the app and takes words only.`); return; }
         const note = attachFiles(chatBot.id, [...e.dataTransfer.files]);
         if (note) flash(note);
         requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.composer__input')?.focus());
@@ -121,6 +123,7 @@ export function ChatView() {
       {dropping && <div className="drop-veil" aria-hidden><div className="drop-veil__card"><Icon name="paperclip" size={22} opacity={0.8} /><span>{canAttach ? `Drop to attach to your message to ${bot.name}` : 'This chat takes words only'}</span></div></div>}
       <VoiceCallBar />
       <BoardDock rows={rows} chatId={chatBot.id} simple={simple} />
+      <AllowedHere rows={rows} chatId={chatBot.id} />
       <Composer key={chatBot.id} bot={chatBot} running={!!live?.isRunning} />
       <header className="chat__header">
         <span className="chat__pill-anchor">

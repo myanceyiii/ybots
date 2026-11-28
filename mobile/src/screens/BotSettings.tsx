@@ -33,10 +33,12 @@ import { SystemdTimers } from '../components/SystemdTimers';
  */
 export type SettingsTab = 'systemd' | 'general' | 'members' | 'look' | 'model' | 'helpers' | 'tools' | 'voice' | 'skills' | 'memories' | 'routines';
 
-export function BotSettings({ api, bot, bots = [], initialTab = 'general', onBack, onBot, onDeleted, onComputer, onSignOut, onDeviceLink, onDevices, onHub, onAsk }: {
+export function BotSettings({ api, bot, bots = [], initialTab = 'general', onBack, onBot, onDeleted, onComputer, onTeach, onSignOut, onDeviceLink, onDevices, onHub, onAsk }: {
   api: Client; bot: Bot; /** Every bot, for a group's Members tab. */ bots?: Bot[]; initialTab?: SettingsTab; onBack: () => void; onBot: (b: Bot) => void; onDeleted: () => void;
   /** Opens the bot's computer (a model sign-in runs in a terminal there). */
   onComputer: () => void;
+  /** Teach a bot by showing it: open its screen to record (false) or the review of a recording (true). */
+  onTeach?: (review: boolean) => void;
   /** For a one-bot app with no home screen: signing out lives here instead, and the bot can't be deleted or made primary. */
   onSignOut?: () => void;
   /** One-bot app: Sign in another device (DeviceLink.tsx), which YBots keeps in the account sheet on Home. */
@@ -132,7 +134,7 @@ export function BotSettings({ api, bot, bots = [], initialTab = 'general', onBac
             {tab === 'helpers' && <Helpers api={api} bot={bot} />}
             {tab === 'tools' && <Tools api={api} bot={bot} />}
             {tab === 'voice' && <Voice api={api} bot={bot} onBot={onBot} />}
-            {tab === 'skills' && <SkillsScreen api={api} bot={bot} appSkills={data?.skills} onAppChange={reload}
+            {tab === 'skills' && <SkillsScreen api={api} bot={bot} appSkills={data?.skills} onAppChange={reload} onTeach={onTeach}
               fallback={(notice) => <Skills api={api} bot={bot} skills={data?.skills} onChange={reload} notice={notice} />} />}
             {tab === 'memories' && <Memories api={api} bot={bot} data={data} onChange={reload} simple={simple} onAsk={onAsk} />}
             {tab === 'routines' && <Routines api={api} bot={bot} initial={data?.routines} simple={simple} onHub={onHub} />}
@@ -588,7 +590,7 @@ function ChatColorSection({ api, bot, onBot }: { api: Client; bot: Bot; onBot: (
 // ---------------------------------------------------------------------------
 // A group chat's own settings: what it is for and the instructions its members follow in it.
 
-type GroupDraft = { name: string; label: string; description: string; instructions: string; avatarShape: string; avatarColor: string };
+type GroupDraft = { name: string; label: string; description: string; instructions: string; avatarShape: Bot['avatarShape']; avatarColor: Bot['avatarColor'] };
 const groupDraftOf = (b: Bot): GroupDraft => ({ name: b.name, label: b.label ?? '', description: b.description ?? '', instructions: b.instructions ?? '', avatarShape: b.avatarShape, avatarColor: b.avatarColor });
 
 function GroupGeneral({ api, bot, onBot, onDeleted, onLook }: { api: Client; bot: Bot; onBot: (b: Bot) => void; onDeleted: () => void; onLook: () => void }) {
@@ -1345,10 +1347,17 @@ function Routines({ api, bot, initial, simple, onHub }: { api: Client; bot: Bot;
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <View style={{ flex: 1, gap: 2 }}>
                   <Text style={[type.body, { fontWeight: '500' }]}>{r.name}</Text>
-                  <Text style={[type.caption, { fontSize: 13 }]}>{r.enabled ? [r.description || r.schedule, nextRun(r.nextRunAt, r.timezone)].filter(Boolean).join(' · ') : 'Paused'}</Text>
+                  <Text style={[type.caption, { fontSize: 13 }, !r.enabled && r.autoOffAt ? { color: color.danger } : null]}>{r.enabled ? [r.description || r.schedule, nextRun(r.nextRunAt, r.timezone)].filter(Boolean).join(' · ') : r.autoOffAt ? 'Turned off after repeated failures' : 'Paused'}</Text>
                 </View>
                 <Switch value={r.enabled} onValueChange={(v) => toggle(r, v)} accessibilityLabel={`${r.name} ${r.enabled ? 'on' : 'paused'}`} />
               </View>
+              {/* The fatigue rule (server routines.ts): 10 failures in a row switch it off; one tap turns it back on. */}
+              {((!r.enabled && !!r.autoOffAt) || (r.enabled && (r.failCount ?? 0) > 0)) && (
+                <View style={{ gap: 8 }}>
+                  <Text style={[type.caption, { fontSize: 13, color: color.danger }]}>{!r.enabled ? `Failed ${r.failCount ?? 10} times in a row, so it was switched off.` : `The last ${r.failCount === 1 ? 'run' : `${r.failCount} runs`} failed. It switches off after 10 in a row.`}{r.lastError ? ` ${r.lastError}` : ''}</Text>
+                  {!r.enabled && <PillButton title="Turn back on" icon="refresh" kind="secondary" onPress={() => toggle(r, true)} />}
+                </View>
+              )}
               {/* A reminder made from the form says only what it is; its wording to the assistant is not for reading. */}
               {!(simple && /^\[(reminder|brief)\]/i.test(r.prompt)) && <>
               <Text numberOfLines={3} style={[type.caption, { fontSize: 13, color: color.inkSecondary }]}>{r.prompt.replace(/^\[reminder\]\s*/i, '')}</Text>

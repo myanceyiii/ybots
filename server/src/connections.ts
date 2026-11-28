@@ -380,7 +380,7 @@ type Backend =
   | { kind: 'plugin'; inner: string; action: string }
   | { kind: 'delete-account'; appId: string }
   | { kind: 'old-google'; appId: string };
-interface Proposal { id: string; userId: string; appId: string; summary: string; details: string[]; digest: string; danger: boolean; expiresAt: number; status: 'pending' | 'applied' | 'cancelled'; backend: Backend }
+interface Proposal { id: string; userId: string; appId: string; summary: string; details: string[]; digest: string; danger: boolean; expiresAt: number; status: 'pending' | 'applying' | 'applied' | 'cancelled'; backend: Backend }
 export interface ProposalView { id: string; summary: string; details: string[]; digest: string; danger: boolean; status: string; expiresAt: number }
 const proposals = new Map<string, Proposal>();
 const TTL = 10 * 60 * 1000;
@@ -453,10 +453,13 @@ export async function confirm(userId: string, agent: string | null, id: string, 
   if (!p || p.userId !== userId) throw new ConnectionError('No such change.', 404);
   if (!isOwner(userId)) throw new ConnectionError('Only the owner of this server can change connections.', 403);
   if (p.status === 'applied') return pview(p);
+  if (p.status === 'applying') throw new ConnectionError('That change is being made now.', 409);
   if (p.status !== 'pending' || p.expiresAt <= now()) throw new ConnectionError('That change expired or was cancelled. Start again.', 409);
   if (digest !== p.digest) throw new ConnectionError('That change is not the one shown. Start again.', 409);
   const b = p.backend;
   let extra: { signInUrl?: string; note?: string } = {};
+  // Claimed before the first await, so a second press (or a second device) cannot make the change twice.
+  p.status = 'applying';
   try {
     if (b.kind === 'admin') { await applyAsPerson(userId, b.input, p.digest, opts.via, p.summary); }
     else if (b.kind === 'connector') { confirmConnector(userId, b.inner, p.digest); }
@@ -473,7 +476,7 @@ export async function confirm(userId: string, agent: string | null, id: string, 
       audit(userId, 'reconnect', b.appId, null, { how: 'google-new' });
       extra = { signInUrl: r.signInUrl, note: 'Finish on Google\'s page: pick the same account and tick every box. Its Bots move over when you are done.' };
     }
-  } catch (e) { throw wrapOther(wrapAdmin(e)); }
+  } catch (e) { p.status = 'pending'; throw wrapOther(wrapAdmin(e)); }
   p.status = 'applied';
   return { ...pview(p), ...extra };
 }

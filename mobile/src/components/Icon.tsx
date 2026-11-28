@@ -39,6 +39,8 @@ const paths = {
   // A loudspeaker with two sound waves: Listen (a reply read aloud).
   speaker: () => <><Path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z" /><Path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" /></>,
   stop: (c?: string) => <Path d="M7 7h10v10H7z" fill={c} />,
+  // A ring with a dot: Record (Teach a bot by showing it).
+  record: (c?: string) => <><Circle cx={12} cy={12} r={8.5} /><Circle cx={12} cy={12} r={4} fill={c} /></>,
   expand: () => <Path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />,
   shrink: () => <Path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />,
   refresh: () => <Path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" />,
@@ -69,6 +71,7 @@ const paths = {
   cart: () => <><Path d="M3 4h2.5l2.2 10.5h9.6L19.5 7H7" /><Circle cx="9" cy="19" r="1.4" /><Circle cx="16.5" cy="19" r="1.4" /></>,
   bowl: () => <Path d="M3 11h18a9 9 0 0 1-18 0zM8 20h8M9 7c0-1.5 1.5-1.5 1.5-3M13.5 7c0-1.5 1.5-1.5 1.5-3" />,
   coin: () => <><Circle cx="12" cy="12" r="9" /><Path d="M14.8 9.2c-.5-.9-1.5-1.4-2.8-1.4-1.6 0-2.8.8-2.8 2.1 0 3 5.8 1.3 5.8 4.3 0 1.3-1.3 2.1-3 2.1-1.4 0-2.5-.6-3-1.6M12 6v1.8M12 16.3V18" /></>,
+  key: () => <><Circle cx="7.5" cy="15.5" r="4.5" /><Path d="M10.7 12.3L21 2M17 6l3 3M14.5 8.5l2.5 2.5" /></>,
   tag: () => <><Path d="M3 12.5V4.5A1.5 1.5 0 0 1 4.5 3h8l8.5 8.5-9.5 9.5z" /><Circle cx="8" cy="8" r="1.3" /></>,
   house: () => <Path d="M4 11l8-7 8 7v9h-5.5v-6h-5v6H4z" />,
   bulb: () => <Path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.3 1 2.1h5c0-.8.4-1.6 1-2.1A6 6 0 0 0 12 3z" />,

@@ -7,6 +7,28 @@ import { File as FsFile } from 'expo-file-system';
 // The app's fetch for bodies of bytes (see src/voice/upload.ts for why).
 import { fetch as expoFetch } from 'expo/fetch';
 import { onKick, requestFailed, requestOk, streamData, streamDown, streamOpened, serverRestarting, serverUpdating } from './connection';
+import type { ApiBody, ApiOp, ApiQuery, ApiRes } from '@shared/api-contract';
+import { apiPath } from './apiPath';
+// The server's own shapes, read as types only (mobile/tsconfig.json maps @shared to server/src). The build
+// strips these lines, so nothing of the server ships in the app, but a typecheck fails the moment the phone
+// reads a shape the server no longer sends. Never copy a server type here: import it.
+import type {
+  Bot, ChatFile, ChatFileEntry, ComputerState, EngineInfo, FallbackChoice, FileKind, FilePreview, Machine,
+  MachineLogEntry, Memory, ModelTier, ModelTierChoice, OutsideExchange, Page, PageBlock, PageOp, PageOpResult,
+  PageShelfItem, PageVersionInfo, ProviderCheckResult, ProviderStatus, Routine, SideChat, Skill, Task,
+  PageAnswer, RemovedTask, TeachDraft, TeachRecording, TeachState, TeachStep,
+} from '@shared/types';
+import type { Row as ServerRow } from '@shared/types';
+import type { LoginView, LoginInput } from '@shared/vault-types';
+export type {
+  Bot, ChatFile, ChatFileEntry, ComputerState, EngineInfo, FallbackChoice, FileKind, FilePreview, Machine,
+  MachineLogEntry, Memory, ModelTier, ModelTierChoice, OutsideExchange, Page, PageBlock, PageOp, PageOpResult,
+  PageShelfItem, PageVersionInfo, ProviderCheckResult, ProviderStatus, Routine, SideChat, Skill, Task,
+  PageAnswer, RemovedTask, TeachDraft, TeachRecording, TeachState, TeachStep,
+} from '@shared/types';
+/** A chat row as the server sends it. Its body stays loose here until the screens read it by kind, as the web does. */
+export type Row = Omit<ServerRow, 'body'> & { body: any };
+
 
 /**
  * How long a request may take before the app gives up on it. Without a limit, a request made while the
@@ -90,6 +112,25 @@ export interface LookRun { id: string; state: 'making' | 'done' | 'failed'; crea
 
 /** One place this account is signed in (server/src/auth.ts). */
 export interface DeviceSession { id: string; device: string | null; who: string; kind: 'person' | 'script'; current: boolean; createdAt: number; lastSeenAt: number | null; expiresAt: number }
+/** A saved login (server/src/vault.ts LoginView): never the username or password. */
+export type SavedLogin = LoginView;
+export type SavedLoginInput = LoginInput;
+/** The activity trail (server/src/activity.ts), as the web's Settings > Activity reads it. */
+export type ActivityStarter = 'person' | 'script' | 'routine' | 'goal' | 'memory' | 'handoff' | 'self' | 'system' | 'earlier';
+export type ActivityOutcome = 'allowed' | 'refused' | 'failed';
+export interface ActivityRow {
+  id: number; at: number; botId: string | null; botName: string | null; forName: string | null;
+  by: { kind: ActivityStarter; id: string | null; name: string | null; text: string; phrase: string; unwatched: boolean };
+  source: string; tool: string; title: string; outcome: ActivityOutcome; how: string | null; detail: string | null; looks: boolean;
+}
+export interface ActivityFilter { botId?: string; outcome?: ActivityOutcome; by?: ActivityStarter | 'unwatched'; looks?: boolean; q?: string; before?: number }
+export interface ActivityPage { rows: ActivityRow[]; more: boolean; counts: { allowed: number; refused: number; failed: number; unwatched: number }; bots: { id: string; name: string }[] }
+const activityQuery = (f: ActivityFilter) => {
+  const p: string[] = [];
+  for (const [k, v] of Object.entries(f)) if (v !== undefined && v !== '' && v !== false) p.push(`${k}=${encodeURIComponent(v === true ? '1' : String(v))}`);
+  return p.join('&');
+};
+
 export interface UsageCounts { turns: number; failed: number; inputTokens: number; outputTokens: number }
 /** How much the bots were used (server/src/usage.ts). Counts only, no prices. */
 export interface UsageReport {
@@ -186,12 +227,22 @@ export function client(s: Session) {
     if (!res.ok) throw new ApiError(res.status, plainReason(res.status, data?.error) + (res.status >= 500 && typeof data?.ref === 'string' && data.ref ? ` (ref ${data.ref.slice(0, 24)})` : ''), data);
     return data as T;
   };
+  /**
+   * A call named in the contract (server/src/api-contract.ts): its address is built from the name, and what it
+   * sends and answers are the server's own types, so the phone and the server cannot disagree unnoticed.
+   */
+  const call = <K extends ApiOp>(op: K, params: Record<string, string | number> = {}, body?: ApiBody<K>, query?: ApiQuery<K>): Promise<ApiRes<K>> => {
+    const { method, path } = apiPath(op, params, query as object | undefined);
+    return req<ApiRes<K>>(method, path.replace(/^\/api/, ''), body);
+  };
   return {
     server: s.server,
     authHeader: base,
     me: () => req<{ user: { email: string; name: string; displayName?: string; scope?: { bots: string[] } } | null }>('GET', '/auth/me'),
     logout: () => req('POST', '/auth/logout', {}),
     status: () => req<ServerStatus>('GET', '/status'),
+    activity: (f: ActivityFilter) => req<ActivityPage>('GET', `/activity?${activityQuery(f)}`),
+    activityExport: (f: ActivityFilter) => req<{ csv: string; rows: number; truncated: boolean; filename: string }>('POST', '/activity/export', { ...f, before: undefined }),
     usage: (days: number) => req<UsageReport>('GET', `/usage?days=${days}&tz=${-new Date().getTimezoneOffset()}`),
     snapshotNow: () => req<{ ok: true; snapshot: { name: string; bytes: number; at: number } | null }>('POST', '/status/snapshot'),
     sessions: () => req<{ sessions: DeviceSession[] }>('GET', '/auth/sessions'),
@@ -201,7 +252,9 @@ export function client(s: Session) {
     clearProblems: () => req<{ ok: true; cleared: number }>('POST', '/status/problems/clear', {}),
     /** Everything this account holds, as one file: every conversation as Markdown, bot instructions and routines. */
     accountExport: () => req<{ exportedAt: string; counts: { bots: number; conversations: number; messages: number } } & Record<string, unknown>>('GET', '/export/account'),
-    bots: () => req<{ bots: Bot[]; live: LiveState[] }>('GET', '/bots'),
+    bots: () => call('GET /api/bots'),
+    /** Which apps the server still works with (server/src/app-support.ts). */
+    appSupport: () => call('GET /api/app-support'),
     createBot: (b: { name: string; avatarShape: string; avatarColor: string }) => req<{ bot: Bot }>('POST', '/bots', b),
     updateBot: (botId: string, p: BotPatch) => req<{ bot: Bot }>('PATCH', `/bots/${botId}`, p),
     // A bot's settings, as on the web's settings window (server/src/routes-config.ts, routes.ts, voice.ts).
@@ -212,8 +265,13 @@ export function client(s: Session) {
     roomMembers: (roomId: string) => req<{ members: RoomMember[] }>('GET', `/rooms/${roomId}/members`),
     setRoomMembers: (roomId: string, botIds: string[]) => req<{ ok: true; members: string[] }>('PUT', `/rooms/${roomId}/members`, { botIds }),
     // Tasks the bots are tracking (server/src/routes.ts): all of them, or one bot's.
-    tasks: () => req<{ tasks: Task[] }>('GET', '/tasks'),
-    botTasks: (botId: string) => req<{ tasks: Task[] }>('GET', `/bots/${botId}/tasks`),
+    /** The Needs you board (server/src/needs-you.ts): everything waiting on the person across every bot. Reading only. */
+    needsYou: () => call('GET /api/needs-you'),
+    tasks: () => call('GET /api/tasks'),
+    botTasks: (botId: string) => call('GET /api/bots/{id}/tasks', { id: botId }),
+    editTask: (botId: string, taskId: string, b: { title?: string; note?: string; state?: Task['state'] }) => call('PATCH /api/bots/{id}/tasks/{taskId}', { id: botId, taskId }, b),
+    deleteTask: (botId: string, taskId: string) => call('DELETE /api/bots/{id}/tasks/{taskId}', { id: botId, taskId }),
+    restoreTask: (botId: string, t: RemovedTask) => call('POST /api/bots/{id}/tasks/restore', { id: botId }, t),
     makePrimary: (botId: string) => req<{ ok: true }>('POST', `/bots/${botId}/primary`),
     /** Sign in another device: a one-time link (15 minutes, one use) for this account (server routes.ts /auth/device-link). */
     deviceLink: () => req<{ url: string; appLink: string; expiresAt: number }>('POST', '/auth/device-link'),
@@ -227,9 +285,9 @@ export function client(s: Session) {
      * Stops the bot's current turn: the engine run is cancelled, what it already wrote stays, its open approval cards expire.
      * In a group chat it stops every member answering the group, or only `member`.
      */
-    interrupt: (botId: string, member?: string) => req<{ ok: true; stopped?: string[] }>('POST', `/bots/${botId}/interrupt`, member ? { member } : undefined),
+    interrupt: (botId: string, member?: string) => call('POST /api/bots/{id}/interrupt', { id: botId }, member ? { member } : undefined),
     /** Add or take back your emoji reaction on a Bot's message (a toggle). */
-    react: (botId: string, seq: number, emoji: string) => req<{ ok: true; added: boolean }>('POST', `/bots/${botId}/rows/${seq}/reactions`, { emoji }),
+    react: (botId: string, seq: number, emoji: string) => call('POST /api/bots/{id}/rows/{seq}/reactions', { id: botId, seq }, { emoji }),
     deleteMemory: (id: string) => req<{ ok: true }>('DELETE', `/memories/${id}`),
     createSkill: (botId: string, k: Pick<Skill, 'name' | 'description' | 'body'>) => req<{ skill: Skill }>('POST', `/bots/${botId}/skills`, k),
     updateSkill: (id: string, k: Partial<Pick<Skill, 'name' | 'description' | 'body'>>) => req<{ skill: Skill }>('PATCH', `/skills/${id}`, k),
@@ -246,11 +304,11 @@ export function client(s: Session) {
     deleteAgentSkill: (botId: string, name: string) => req<{ ok: true }>('DELETE', `/bots/${botId}/hermes-skills/${encodeURIComponent(name)}`),
     systemdTimers: (id: string, probe = false) => req<{ checkedAt?: number; hosts: { host: string; label?: string; reachable: boolean; timers: { name: string; state: string; next: number | null; last: number | null; activates?: string | null }[] }[] }>('GET', `/bots/${id}/systemd-timers${probe ? '?probe=1' : ''}`),
     changeSystemdTimer: (id: string, host: string, unit: string, action: 'enable' | 'disable') => req<{ state: string }>('POST', `/bots/${id}/systemd-timers/change`, { host, unit, action }),
-    routines: (botId: string) => req<{ routines: Routine[] }>('GET', `/bots/${botId}/routines`),
-    setRoutine: (id: string, enabled: boolean) => req<{ routine: Routine }>('PATCH', `/routines/${id}`, { enabled }),
-    setRoutineQuiet: (id: string, quiet: boolean) => req<{ routine: Routine }>('PATCH', `/routines/${id}`, { quiet }),
-    runRoutine: (id: string) => req<{ ok: true }>('POST', `/routines/${id}/run`),
-    deleteRoutine: (id: string) => req<{ ok: true }>('DELETE', `/routines/${id}`),
+    routines: (botId: string) => call('GET /api/bots/{id}/routines', { id: botId }),
+    setRoutine: (id: string, enabled: boolean) => call('PATCH /api/routines/{id}', { id }, { enabled }),
+    setRoutineQuiet: (id: string, quiet: boolean) => call('PATCH /api/routines/{id}', { id }, { quiet }),
+    runRoutine: (id: string) => call('POST /api/routines/{id}/run', { id }),
+    deleteRoutine: (id: string) => call('DELETE /api/routines/{id}', { id }),
     engine: (botId: string) => req<{ engine: EngineInfo }>('GET', `/bots/${botId}/engine`),
     setEngine: (botId: string, p: { provider?: string | null; model?: string | null; modelMode?: 'manual' | 'auto'; modelTiers?: EngineInfo['modelTiers']; providerLock?: string | null;
       fallbacks?: FallbackChoice[]; allowSubscription?: boolean; acknowledgeSubscriptionTerms?: boolean }) =>
@@ -310,12 +368,12 @@ export function client(s: Session) {
     voiceSession: (botId: string) => req<VoiceSession>('POST', '/voice/session', { botId }),
     voiceEnd: (botId: string, callId: string, transcript: { role: 'user' | 'assistant'; text: string }[], error?: string) =>
       req<{ ok: true }>('POST', '/voice/end', { botId, callId, transcript, error }),
-    rows: (botId: string) => req<{ generation: number; rows: Row[] }>('GET', `/bots/${botId}/rows?limit=200`),
+    rows: (botId: string) => call('GET /api/bots/{id}/rows', { id: botId }, undefined, { limit: 200 }) as Promise<{ generation: number; rows: Row[] }>,
     // The rows just before `beforeSeq`: earlier messages, loaded when the chat is scrolled to its top.
-    rowsBefore: (botId: string, beforeSeq: number) => req<{ generation: number; rows: Row[] }>('GET', `/bots/${botId}/rows?beforeSeq=${beforeSeq}&limit=200`),
+    rowsBefore: (botId: string, beforeSeq: number) => call('GET /api/bots/{id}/rows', { id: botId }, undefined, { beforeSeq, limit: 200 }) as Promise<{ generation: number; rows: Row[] }>,
     /** `clientId` names this send, so sending it again after a dropped connection can never post it twice. */
     send: (botId: string, text: string, opts: { editOf?: number; attachments?: string[]; clientId?: string } = {}) =>
-      req<{ row: Row; duplicate?: boolean }>('POST', `/bots/${botId}/messages`, { text, ...(opts.editOf ? { editOf: opts.editOf } : {}), ...(opts.attachments?.length ? { attachments: opts.attachments } : {}), ...(opts.clientId ? { clientId: opts.clientId } : {}) }),
+      call('POST /api/bots/{id}/messages', { id: botId }, { text, ...(opts.editOf ? { editOf: opts.editOf } : {}), ...(opts.attachments?.length ? { attachments: opts.attachments } : {}), ...(opts.clientId ? { clientId: opts.clientId } : {}) }) as Promise<{ row: Row; duplicate?: boolean }>,
     /** Put a picture or file from the phone in the bot's Library (uploads/), to send with a message (server chat-extras.ts). */
     attach: async (botId: string, uri: string, name: string): Promise<ChatFile> => {
       let bytes: Uint8Array;
@@ -343,11 +401,11 @@ export function client(s: Session) {
     read: (botId: string) => req('POST', `/bots/${botId}/read`, {}),
     // Side chats (server/src/side-chats.ts): more conversations with the same bot. Each one is read and written
     // like a chat with its own id (rows, send, read, interrupt, fresh, cards).
-    sideChats: (botId: string) => req<{ chats: SideChat[]; allowed: boolean }>('GET', `/bots/${botId}/side-chats`),
-    newSideChat: (botId: string) => req<{ chat: SideChat }>('POST', `/bots/${botId}/side-chats`, {}),
-    renameSideChat: (id: string, title: string) => req<{ ok: true; chats: SideChat[] }>('PATCH', `/side-chats/${id}`, { title }),
-    deleteSideChat: (id: string) => req<{ ok: true; undoUntil: number }>('DELETE', `/side-chats/${id}`),
-    restoreSideChat: (id: string) => req<{ ok: true; chats: SideChat[] }>('POST', `/side-chats/${id}/restore`, {}),
+    sideChats: (botId: string) => call('GET /api/bots/{id}/side-chats', { id: botId }),
+    newSideChat: (botId: string) => call('POST /api/bots/{id}/side-chats', { id: botId }, {}),
+    renameSideChat: (id: string, title: string) => call('PATCH /api/side-chats/{id}', { id }, { title }),
+    deleteSideChat: (id: string) => call('DELETE /api/side-chats/{id}', { id }),
+    restoreSideChat: (id: string) => call('POST /api/side-chats/{id}/restore', { id }),
     // Notification settings (server/src/notify.ts), profile 'main' (YBots, web, Windows).
     // Chat list AI summaries (server/src/list-summary.ts), the same setting as the web's Settings › General.
     listSummary: () => req<ListSummaryInfo>('GET', '/list-summary'),
@@ -357,13 +415,22 @@ export function client(s: Session) {
     // The phone always sends the card's digest (the server refuses an answer without it), "always" included.
     connectApp: (slug: string, botId?: string, seq?: number) => req<{ redirectUrl: string }>('POST', `/apps/${slug}/connect`, { botId, seq }),
     // A secure input card (server/src/browser-cards.ts): the typed value goes to the bot's browser, never the chat.
-    secretInput: (approvalId: string, value: string, digest: string) =>
-      req<{ ok: true; approval: Readback }>('POST', `/approvals/${approvalId}/secret`, { value, digest }),
+    secretInput: (approvalId: string, value: string, digest: string, save = false) =>
+      req<{ ok: true; approval: Readback }>('POST', `/approvals/${approvalId}/secret`, { value, digest, ...(save ? { save: true } : {}) }),
+    // Sign in on a saved-login card (server/src/vault.ts): only the login's owner; the server types it into the page.
+    useSavedLogin: (approvalId: string, digest: string) => req<{ ok: true; approval: Readback }>('POST', `/approvals/${approvalId}/login`, { digest }),
+    // Saved logins: the signed-in person's own (never their values).
+    vaultLogins: () => req<{ logins: SavedLogin[]; bots: { id: string; name: string }[] }>('GET', '/vault/logins'),
+    addVaultLogin: (b: SavedLoginInput) => req<{ ok: true; login: SavedLogin }>('POST', '/vault/logins', b),
+    updateVaultLogin: (id: string, b: Partial<SavedLoginInput>) => req<{ ok: true; login: SavedLogin }>('PATCH', `/vault/logins/${id}`, b),
+    deleteVaultLogin: (id: string) => req<{ ok: true }>('DELETE', `/vault/logins/${id}`),
     // A posting plan card (server/src/posting.ts): the days left switched on, approved once or always.
     postingPlan: (approvalId: string, days: string[], decision: 'allow' | 'always', digest: string) =>
       req<{ ok: true; approval: Readback }>('POST', `/approvals/${approvalId}/plan`, { days, decision, digest }),
-    approve: (approvalId: string, decision: 'allow' | 'always' | 'deny', digest: string) =>
-      req<{ ok: true; approval: Readback }>('POST', `/approvals/${approvalId}`, { decision, digest }),
+    approve: (approvalId: string, decision: 'allow' | 'always' | 'conversation' | 'deny', digest: string) =>
+      call('POST /api/approvals/{id}', { id: approvalId }, { decision, digest }),
+    // Turn off what this conversation allows without asking (server/src/conversation-allows.ts).
+    turnOffAllowedHere: (chatId: string, id?: string) => req<{ ok: true; turnedOff: number }>('POST', `/bots/${chatId}/allowed-here/off`, id ? { id } : {}),
     // "Always allow" rules for one bot (server/src/allow-rules.ts): list, what they let through, remove.
     allowRules: (botId?: string) => req<{ rules: AllowRule[]; log: AllowRuleUse[]; freeRun?: FreeRunBot[] }>('GET', `/allow-rules${botId ? `?botId=${encodeURIComponent(botId)}` : ''}`),
     /** Older per-tool choices for every bot (Settings › Permissions on the web). */
@@ -372,7 +439,7 @@ export function client(s: Session) {
     deleteAllowRule: (id: string) => req<{ ok: true }>('DELETE', `/allow-rules/${encodeURIComponent(id)}`),
     // The maintainer bot's free-run switch (server/src/maintainer-guard.ts): every terminal command runs without a card.
     setFreeTerminal: (botId: string, on: boolean) => req<{ ok: true; on: boolean }>('PUT', `/bots/${encodeURIComponent(botId)}/free-terminal`, { on }),
-    answer: (botId: string, card: CardRef, answer: string) => req('POST', cardPath(botId, card, 'answer'), { answer }),
+    answer: (botId: string, card: CardRef, answer: string) => call('POST /api/bots/{id}/cards/{seq}/answer', { id: botId, seq: card.seq }, { answer }, { generation: card.generation }),
     dismiss: (botId: string, card: CardRef) => req('POST', cardPath(botId, card, 'dismiss'), {}),
     // A change to an answer view (server/src/views.ts): check, pick, field or send. Answers with the updated row.
     viewChange: (botId: string, card: CardRef, change: Record<string, unknown>) => req<{ ok: true; row: Row }>('POST', cardPath(botId, card, 'view'), change),
@@ -424,9 +491,9 @@ export function client(s: Session) {
     chatFiles: (botId: string) => req<{ files: ChatFileEntry[] }>('GET', `/bots/${botId}/chat-files`),
     filePreview: (botId: string, path: string) => req<FilePreview>('GET', `/bots/${botId}/files/preview?path=${encodeURIComponent(path)}`),
     saveFileText: (botId: string, path: string, text: string, modifiedAt?: number) => req<ChatFile>('PUT', `/bots/${botId}/files/text`, { path, text, modifiedAt }),
-    page: (botId: string, path: string) => req<Page>('GET', `/bots/${botId}/pages?path=${encodeURIComponent(path)}`),
+    page: (botId: string, path: string) => call('GET /api/bots/{id}/pages', { id: botId }, undefined, { path }),
     newPage: (botId: string, title: string) => req<{ path: string; page: Page }>('POST', `/bots/${botId}/pages`, { title }),
-    pageOps: (botId: string, path: string, ops: PageOp[]) => req<{ page: Page; results: PageOpResult[] }>('POST', `/bots/${botId}/pages/ops`, { path, ops }),
+    pageOps: (botId: string, path: string, ops: PageOp[]) => call('POST /api/bots/{id}/pages/ops', { id: botId }, { path, ops }),
     pageHistory: (botId: string, path: string) => req<{ versions: PageVersionInfo[] }>('GET', `/bots/${botId}/pages/history?path=${encodeURIComponent(path)}`),
     pageVersion: (botId: string, path: string, v: number) => req<Page>('GET', `/bots/${botId}/pages/version?v=${v}&path=${encodeURIComponent(path)}`),
     pageRestore: (botId: string, path: string, version: number | 'undo') => req<Page>('POST', `/bots/${botId}/pages/restore`, version === 'undo' ? { path, undo: true } : { path, version }),
@@ -449,6 +516,13 @@ export function client(s: Session) {
     resetScreen: (botId: string) => req<{ ok: true }>('POST', `/bots/${botId}/screen/reset`),
     /** Tells the bot the person has stopped driving its screen. */
     handback: (botId: string) => req<{ ok: true }>('POST', `/bots/${botId}/handback`),
+    // Teach a bot by showing it (server/src/teach.ts): record what the person does in the bot's browser.
+    teach: (botId: string) => req<TeachState>('GET', `/bots/${botId}/teach`),
+    teachStart: (botId: string) => req<TeachState>('POST', `/bots/${botId}/teach/start`),
+    teachStop: (botId: string, note?: string) => req<TeachState>('POST', `/bots/${botId}/teach/stop`, { note: note ?? null }),
+    teachRedraft: (botId: string, id: string, p: { note?: string; remove?: number[] }) => req<TeachState>('POST', `/bots/${botId}/teach/${id}/redraft`, p),
+    teachSave: (botId: string, id: string, d: TeachDraft) => req<{ ok: true; skillName: string }>('POST', `/bots/${botId}/teach/${id}/save`, d),
+    teachDiscard: (botId: string, id: string) => req<{ ok: true }>('POST', `/bots/${botId}/teach/${id}/discard`),
     /** The live screen gave up after its quiet retries: logged on the server so a flaky view can be traced. */
     screenProblem: (botId: string, p: { tries: number; cause: string; code?: number; opened?: boolean; ms?: number }) =>
       req<{ ok: true }>('POST', `/bots/${botId}/screen/problem`, { ...p, client: 'android' }),
@@ -550,12 +624,6 @@ export function client(s: Session) {
 }
 export type Client = ReturnType<typeof client>;
 
-/** One message between a bot and an outside member (server types.ts OutsideExchange). */
-export interface OutsideExchange {
-  id: number; direction: 'out' | 'in'; botId: string | null; botName: string | null; roomId: string | null; type: string | null;
-  text: string; link: string | null; state: string; error: string | null; createdAt: number; answeredAt: number | null;
-  replies: { text: string; link: string | null; createdAt: number }[];
-}
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh';
 export interface WebSearchStatus {
   service: string; keySet: boolean; extract: string; fallback: string | null; cacheMinutes: number; monthStart: number;
@@ -563,9 +631,7 @@ export interface WebSearchStatus {
 }
 
 export type BotPatch = Partial<Pick<Bot, 'name' | 'label' | 'description' | 'instructions' | 'avatarShape' | 'avatarColor' | 'pinned' | 'effort' | 'mode' | 'voice' | 'voiceSpeed' | 'voiceLanguage' | 'chatColor' | 'visuals' | 'webSearch' | 'phoneActions' | 'busySend' | 'ownerHidden'>>;
-export interface Task { id: string; botId: string; title: string; state: 'working' | 'needs_input' | 'done'; note: string; updatedAt: number }
-export interface Memory { id: string; botId: string; text: string; createdAt: number; source?: 'chat' | 'learned' }
-export interface Skill { id: string; botId: string; name: string; description: string; body: string; createdAt: number; updatedAt: number }
+export type { NeedsItem, NeedsKind } from '@shared/needs-you-types';
 /** A skill in the bot's own Hermes agent (server/src/types.ts HermesSkill). */
 export type AgentSkillSource = 'own' | 'builtin' | 'hub' | 'external';
 export interface AgentSkill {
@@ -575,13 +641,10 @@ export interface AgentSkill {
 }
 export interface AgentSkillDetail { name: string; description: string; body: string; content: string; category: string; source: AgentSkillSource; enabled: boolean; files: string[] }
 export interface AgentSkillList { available: boolean; reason?: string; skills: AgentSkill[]; autoSave?: boolean; canChangeAutoSave?: boolean }
-export interface Routine { id: string; botId: string; name: string; prompt: string; schedule: string; timezone: string; enabled: boolean; nextRunAt: number | null; lastRunAt: number | null; description: string; quiet?: boolean }
 export interface SettingsBundle {
   memories: Memory[]; skills: Skill[]; routines: Routine[];
   memory: { lastConsolidatedAt: number | null; historyChars: number; compactAtChars: number; lastCompaction: { method: string; created_at: number } | null };
 }
-export type ModelTier = 'light' | 'standard' | 'heavy';
-export interface ModelTierChoice { model: string; effort: Effort }
 export interface HelperRoute { model: string; effort: Effort | null }
 export interface HelperSettings { enabled: boolean; maxAtOnce: number; stepLimit: number; maxTier: ModelTier; defaultTier: ModelTier; routes: Partial<Record<ModelTier, HelperRoute>> }
 export interface HelpersView extends HelperSettings { provider: string | null; perJobChoice: boolean; inheritsMainModel: boolean }
@@ -655,34 +718,6 @@ export interface PluginSwitchResult {
 }
 export interface PluginChange { id: string; action?: string; summary: string; details: string[]; digest: string; status: 'pending' | 'applied' | 'cancelled' | 'expired'; expiresAt: number }
 export interface HelpersBundle { helpers: HelpersView; models: string[]; canEdit: boolean; runs: HelperRun[] }
-export interface EngineInfo {
-  botId: string; profile: string; status: 'ready' | 'starting' | 'stopped' | 'error'; error: string | null;
-  model: string | null; provider: string | null; version: string | null;
-  /** optIn: offered only after the owner switches it on for this bot (the Claude subscription); enabled: it is on. */
-  providers: { id: string; name: string; kind: 'subscription' | 'api_key'; connected: boolean; models: string[]; optIn?: boolean; enabled?: boolean }[];
-  modelMode: 'manual' | 'auto'; modelTiers: Partial<Record<ModelTier, ModelTierChoice>> | null; providerLock: string | null;
-  tierPresets: Record<string, { label: string; tiers: Partial<Record<ModelTier, ModelTierChoice>> }>;
-  lastRoute: { at: number; mode: 'manual' | 'auto'; tier: ModelTier | null; provider: string | null; model: string | null; reason: string; ok: boolean } | null;
-  ownScreen: boolean;
-  /** Shared provider catalog (server/src/provider-catalog.ts). Missing on an older server. */
-  appManaged?: boolean;
-  catalog?: ProviderStatus[];
-  fallbacks?: FallbackChoice[];
-  subscriptionAllowed?: boolean;
-  /** A change waits for the agent to restart (the owner's own agent restarts only when idle). */
-  restartNote?: string | null;
-}
-export interface FallbackChoice { provider: string; model: string }
-/** One provider for one bot: listed, access and verified are separate facts. */
-export interface ProviderStatus {
-  id: string; name: string; route: 'api_key' | 'subscription' | 'sign_in'; experimental: boolean; optIn: boolean; billing: string; warning: string | null;
-  source: 'catalog' | 'agent'; eligible: boolean; eligibleNote: string | null;
-  access: 'ready' | 'needs_key' | 'not_signed_in' | 'off' | 'not_installed' | 'unknown'; accessNote: string;
-  models: string[]; modelsFromAgent: boolean;
-  verified: { at: number; model: string; ok: boolean; detail: string | null; ms: number | null } | null;
-  lastTurn: { at: number; model: string | null; ok: boolean } | null;
-}
-export interface ProviderCheckResult { ok: boolean; provider: string; model: string; answeredBy: string | null; detail: string; ms: number; at: number }
 export interface VoiceSession { callId: string; startSeq: number; voice: string; speed: number; language: string; greeting: string; approvalsByVoice: boolean }
 export interface VoiceOptions { voices: { id: string; name: string; gender?: string; language?: string; group?: string }[]; languages: { code: string; name: string }[]; speeds: number[]; defaultVoice?: string; live?: boolean }
 
@@ -697,83 +732,11 @@ export interface ListSummaryInfo {
   lastError: { at: number; error: string } | null;
 }
 
-export interface Bot {
-  id: string; name: string; label: string; avatarShape: string; avatarColor: string; avatarImageUrl: string | null;
-  /** Its colour in chats (chatColors.ts); null for a group. `chatColorAuto` = picked for it, not chosen. */
-  chatColor?: import('./chatColors').ChatColor | null; chatColorAuto?: boolean;
-  /** How often it uses views, calculators, tap choices and Pages (server visuals-level.ts). Not on a group. */
-  visuals?: 'minimal' | 'balanced' | 'rich';
-  /** What a message sent while it works does (server steer-mode.ts): steer (default), queue or interrupt. */
-  busySend?: 'steer' | 'queue' | 'interrupt';
-  /** Searches the web and reads pages by API (server web-search.ts); false = off. Not on a group. */
-  webSearch?: boolean;
-  /** Sets timers and alarms in this phone's Clock app (server phone.ts). Not on a group. */
-  phoneActions?: boolean;
-  /** Pose pictures by pose name (made from the picture); empty for a shape. */
-  avatarPoses?: Record<string, string>;
-  avatarPoseJob?: { state: 'making' | 'ready' | 'stopped'; done: number; total: number; failed: number; error?: string } | null;
-  isPrimary: boolean; kind: 'agent' | 'room'; pinned: boolean; unread: number; lastPreview: string | null; lastActivityAt: number;
-  /** lastPreview in at most 48 characters, for rows too narrow for it; who the line is about (server/src/list-preview.ts). */
-  previewShort?: string | null; previewForms?: string[] | null; previewBy?: 'bot' | 'member' | 'you' | 'other' | 'card' | 'event' | 'summary' | null;
-  // Settings (the server sends them all; optional so old fixtures still type-check).
-  description?: string; instructions?: string; effort?: Effort; mode?: 'personal' | 'teammate';
-  voice?: string; voiceSpeed?: number; voiceLanguage?: string; model?: string | null; provider?: string | null;
-  /** Set for a bot that lives outside the app (Sheldon) and is reached through Slack. */
-  outside?: { via: 'slack'; channelName: string; status: string; waiting: number; callUrl?: string } | null;
-  /** Other bots this one is waiting on for an answer (same as server/src/types.ts). */
-  waitingFor?: { id: string; name: string; since: number }[];
-  /** Its side chats, when it has any: how many, unread replies in them, how many are working. */
-  sideChats?: { count: number; unread: number; running: number };
-  /** Hidden from this account's own list (Alex hid a bot): left out of Home, its counts and pickers, and the
-   * server sends no notifications about it to the main profile. Never true on a scoped sign-in. */
-  ownerHidden?: boolean;
-}
 
-/** One of a bot's side chats (same as server/src/types.ts SideChat). */
-export interface SideChat {
-  id: string; botId: string; title: string; createdAt: number; lastActivityAt: number;
-  lastPreview: string | null; unread: number; generation: number; live: LiveState;
-}
 /** A member of a group chat, as GET /api/rooms/:id/members sends it. */
 export interface RoomMember { id: string; name: string; label: string; avatarShape: string; avatarColor: string }
-/** The shared computer the bots' screens live on (ComputerState in server/src/types.ts). */
-export interface ComputerState {
-  status: 'absent' | 'creating' | 'starting' | 'running' | 'suspending' | 'suspended' | 'resuming' | 'error' | 'stopped';
-  error: string | null;
-  screens: { botId: string; screenId: string; width?: number; height?: number }[];
-  maxScreens?: number;
-}
-export interface Machine {
-  id: string; name: string; online: boolean; lastSeenAt: number | null; createdAt: number;
-  folders: { name: string; path: string }[]; commands: boolean; screen: boolean; control: boolean;
-  /** The PC's own "copy and paste" switch (needs taking control too). */
-  clipboard?: boolean;
-  bots: string[]; blockedBots: string[]; pcBlocked: string[]; version: string | null;
-}
-export interface MachineLogEntry { id: number; botId: string | null; botName: string | null; tool: string; outcome: string; detail: string | null; at: number }
-/** Same shapes as server/src/types.ts (ChatFile, FilePreview). */
-export type FileKind = 'markdown' | 'text' | 'code' | 'table' | 'image' | 'pdf' | 'office' | 'sheet' | 'page' | 'other';
-export interface ChatFile { path: string; name: string; size: number; modifiedAt: number; kind: FileKind }
-export interface ChatFileEntry extends ChatFile { seq: number; missing?: boolean }
-export interface FilePreview extends ChatFile {
-  editable: boolean; text?: string; lang?: string; pages?: number; truncated?: boolean; error?: string;
-  sheets?: { name: string; rows: string[][]; truncated: boolean }[];
-}
-/** Pages (server/src/pages.ts; same shapes as server/src/types.ts). */
-export interface PageBlock { id: string; type: string; rev: number; by: string; byKind: 'person' | 'bot'; at: number; alt?: { by: string; byKind: string; at: number; fields: Record<string, any> }; [k: string]: any }
-export interface Page { cleftPage: 1; id: string; title: string; version: number; blocks: PageBlock[]; updatedAt: number; sendTo?: string; sendToTitle?: string }
-/** One Page in a bot's Pages list (server/src/page-shelf.ts, PageShelfItem). */
-export interface PageShelfItem {
-  path: string; id: string; title: string; updatedAt: number; version: number; blocks: number;
-  kind: 'calculator' | 'chart' | 'form' | 'checklist' | 'table' | 'doc'; snippet: string; pinned: boolean;
-  origin: { chatId: string; chatTitle: string; kind: 'view' | 'bot' | 'person'; seq?: number } | null; sendTo: string;
-}
-export type PageOp = { op: string; [k: string]: any };
-export interface PageOpResult { ok: boolean; id?: string; error?: string; conflict?: boolean }
-export interface PageVersionInfo { version: number; by: string; byKind: 'person' | 'bot'; at: number; summary: string }
 export interface FileListing { status: 'ok' | 'asleep' | 'error'; path: string; files: { name: string; size: number; modifiedAt: number; isDir: boolean }[]; error?: string }
 
-export interface Row { seq: number; generation: number; kind: string; body: any; createdAt: number }
 export interface Readback { id: string; status: string; title: string; resolvedAt: number | null }
 
 /** A standing "Always allow" rule: one bot, one tool. */

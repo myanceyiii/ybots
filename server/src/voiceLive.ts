@@ -8,7 +8,8 @@
 import type { IncomingMessage, Server } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isLoopbackUrl } from './env.js';
-import { isSameOriginRequest, userFromCookieHeader, userFromToken } from './lib/auth.js';
+import { isSameOriginRequest, tokenFromCookieHeader, userFromCookieHeader, userFromToken } from './lib/auth.js';
+import { endWhenSignedOut } from './vnc.js';
 
 const url = process.env.LIVE_STT_URL?.trim() || '';
 const remoteOk = process.env.VOICE_REMOTE === '1';
@@ -36,6 +37,12 @@ const MAX_MS = 150_000;
 export function attachLiveStt(server: Server) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
   server.on('upgrade', (req: IncomingMessage, socket, head) => {
+    try { upgrade(req, socket, head); } catch (e) {
+      console.warn('[voice-live] bad upgrade', String((e as Error)?.message ?? e).slice(0, 200));
+      socket.destroy();
+    }
+  });
+  function upgrade(req: IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) {
     if (new URL(req.url ?? '/', 'http://x').pathname !== '/api/voice/live') return; // not ours
     const header = (h: string | string[] | undefined) => (Array.isArray(h) ? h[0] : h);
     const refuse = (code: string) => { socket.write(`HTTP/1.1 ${code}\r\n\r\n`); socket.destroy(); };
@@ -45,13 +52,13 @@ export function attachLiveStt(server: Server) {
     const user = bearer !== undefined ? userFromToken(bearer) : userFromCookieHeader(req.headers.cookie);
     if (!user) return refuse('401 Unauthorized');
     if (!liveSttConfigured) return refuse('503 Service Unavailable');
-    wss.handleUpgrade(req, socket, head, (client) => relay(client));
-  });
+    wss.handleUpgrade(req, socket, head, (client) => { endWhenSignedOut(client, bearer ?? tokenFromCookieHeader(req.headers.cookie)); relay(client); });
+  }
 }
 
 function relay(client: WebSocket) {
   const up = new WebSocket(url, { maxPayload: 1024 * 1024 });
-  const queued: Buffer[] = [];
+  const queued: { msg: Buffer; binary: boolean }[] = [];
   let closed = false;
   const end = (code = 1000, why = '') => {
     if (closed) return;
@@ -61,7 +68,7 @@ function relay(client: WebSocket) {
     try { up.close(); } catch { /* gone */ }
   };
   const limit = setTimeout(() => end(1000, 'too long'), MAX_MS);
-  up.on('open', () => { for (const b of queued.splice(0)) up.send(b); });
+  up.on('open', () => { for (const q of queued.splice(0)) up.send(q.msg, { binary: q.binary }); });
   up.on('message', (data, isBinary) => { if (!isBinary && client.readyState === WebSocket.OPEN) client.send(data.toString()); });
   up.on('close', () => end(1000, 'done'));
   up.on('error', () => {
@@ -73,7 +80,7 @@ function relay(client: WebSocket) {
     // Audio passes as is; the only text the service takes is {"type":"stop"}.
     const msg = isBinary ? (data as Buffer) : Buffer.from(JSON.stringify({ type: 'stop' }));
     if (up.readyState === WebSocket.OPEN) up.send(msg, { binary: isBinary });
-    else if (up.readyState === WebSocket.CONNECTING && queued.length < 500) queued.push(msg);
+    else if (up.readyState === WebSocket.CONNECTING && queued.length < 500) queued.push({ msg, binary: isBinary });
   });
   client.on('close', () => end());
   client.on('error', () => end());

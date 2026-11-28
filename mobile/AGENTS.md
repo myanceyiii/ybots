@@ -16,6 +16,10 @@ set). See `app.config.ts`.
 - The phone signs in with a bearer token from a QR sign-in link, kept in SecureStore. It answers
   approvals only with the card's digest. "Always allow" is offered where the card allows it (never for an email send).
 - Run `npm run typecheck` before calling a change done.
+- Server shapes come from `@shared/...` (mapped to `../server/src`) with `import type` only; the release
+  build ships this folder alone, so a value import from the server would break it. Shared helpers
+  (`messageText.ts`, `calc.ts`, `pageChart.ts`, ...) are copies written by `npm run shared:sync` at the repo
+  root; never edit them here. See `docs/api-contract.md`.
 - To see the screens without a phone, `npm run preview:web` renders every screen with demo data
   (`preview/Preview.tsx`, picked with `?screen=home|chat|computer|newbot|look|call|signin|welcome`,
   `&few=1` for a three-bot install). Compare against the Grok Bot references before calling a look done.

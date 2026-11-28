@@ -153,7 +153,7 @@ function pageIdAt(owner: string, rel: string): string {
   if (!f) throw err('Page not found', 404);
   try {
     const id = JSON.parse(fs.readFileSync(f, 'utf8'))?.id;
-    if (typeof id === 'string' && id) return id;
+    if (typeof id === 'string' && /^pg_\w{4,40}$/.test(id)) return id;
   } catch { /* fall through */ }
   throw err('This file is not a YBots Page', 422);
 }

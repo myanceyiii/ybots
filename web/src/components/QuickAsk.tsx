@@ -162,7 +162,7 @@ export function QuickAsk({ wanted, popup, onOpenApp }: { wanted: string | null; 
       const files: ChatFile[] = [];
       for (const p of pics) files.push(await api.attach(bot.id, p.blob, p.name));
       const screen = pics.some((p) => p.screen) ? `\n\n(Shared my screen${popup ? ' from my PC' : ''}.)` : '';
-      const r = await api.send(bot.id, (words || 'What do you make of this?') + screen, { attachments: files.map((f) => f.path), clientId: `talk-${crypto.randomUUID()}` });
+      const r = await api.send(bot.id, (words || 'What do you make of this?') + screen, { attachments: files.map((f) => f.path), clientId: `talk-${crypto.randomUUID?.() ?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`}` });
       for (const p of pics) URL.revokeObjectURL(p.url);
       setPics([]);
       byVoice.current = voice;

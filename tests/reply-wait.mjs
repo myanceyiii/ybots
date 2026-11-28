@@ -12,11 +12,10 @@ const card = (seq, at, status = 'pending', extra = {}) => ({ seq, createdAt: at,
 const tool = (seq, at) => ({ seq, createdAt: at, body: { type: 'tool-call', status: 'done' } });
 const run = (o) => w.replyWait({ live: null, startedAt: null, ...o }).state;
 
-test('the Android copy is the same file under its one-line header', () => {
+test('the Android copy is the same file, word for word (scripts/shared-copies.mjs)', () => {
   const mobile = fs.readFileSync(new URL('../mobile/src/replyWait.ts', import.meta.url), 'utf8');
   const server = fs.readFileSync(new URL('../server/src/reply-wait.ts', import.meta.url), 'utf8');
-  assert.match(mobile.split('\n')[0], /^\/\/ Verbatim copy of server\/src\/reply-wait\.ts/);
-  assert.equal(mobile.split('\n').slice(1).join('\n'), server);
+  assert.equal(mobile, server);
 });
 
 test('a secure input card waiting (turn ended): no "No answer yet", however long', () => {

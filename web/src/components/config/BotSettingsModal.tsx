@@ -732,6 +732,7 @@ function RoutineItem({ r, onFlash, simple }: { r: Routine; onFlash: (t: string) 
   };
   const [quiet, setQuiet] = useState(r.quiet !== false);
   useEffect(() => setQuiet(r.quiet !== false), [r.quiet]);
+  const autoOff = !enabled && !!r.autoOffAt;
   const toggleQuiet = async (v: boolean) => {
     setQuiet(v);
     try { await configApi.setRoutineQuiet(r.id, v); onFlash(v ? 'Posts only when something is found' : 'Posts every run'); } catch (e) { setQuiet(!v); onFlash((e as Error).message || 'Could not change it.'); }
@@ -741,7 +742,14 @@ function RoutineItem({ r, onFlash, simple }: { r: Routine; onFlash: (t: string) 
       <span className="cfg-item__icon"><Icon name="clock" size={14} /></span>
       <div className="cfg-item__text">
         <div className="cfg-item__title">{r.name}</div>
-        <div className="cfg-item__sub">{enabled ? [r.description || r.schedule, nextRunLabel(r.nextRunAt, r.timezone)].filter(Boolean).join(' · ') : 'Paused'}</div>
+        <div className="cfg-item__sub">{enabled ? [r.description || r.schedule, nextRunLabel(r.nextRunAt, r.timezone)].filter(Boolean).join(' · ') : autoOff ? 'Turned off after repeated failures' : 'Paused'}</div>
+        {/* The fatigue rule (server routines.ts): 10 failures in a row switch it off; one tap turns it back on. */}
+        {(autoOff || (enabled && (r.failCount ?? 0) > 0)) && (
+          <div className="cfg-item__fail" role="status">
+            <span>{autoOff ? `Failed ${r.failCount ?? 10} times in a row, so it was switched off.` : `The last ${r.failCount === 1 ? 'run' : `${r.failCount} runs`} failed. It switches off after 10 in a row.`}{r.lastError ? ` ${r.lastError}` : ''}</span>
+            {autoOff && <button type="button" className="cfg-btn cfg-btn--secondary cfg-item__fail-btn" onClick={() => toggle(true)}>Turn back on</button>}
+          </div>
+        )}
         {/* A reminder made from the form says only what it is; its wording to the assistant is not for reading. */}
         {!(simple && /^\[(reminder|brief)\]/i.test(r.prompt)) && <>
           <div className="cfg-item__prompt">{r.prompt.replace(/^\[reminder\]\s*/i, '')}</div>

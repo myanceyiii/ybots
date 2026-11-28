@@ -14,6 +14,11 @@ export function setScopedSignIn(v: boolean) {
   scoped = v;
   for (const f of subs) f();
 }
+/** Whether this sign-in is a scoped person's (a saved-login card shows Sign in only to its owner). */
+export const isScopedSignIn = () => scoped;
+export function useScopedSignIn(): boolean {
+  return useSyncExternalStore((f) => { subs.add(f); return () => { subs.delete(f); }; }, isScopedSignIn, isScopedSignIn);
+}
 export function useSimple(): boolean {
   return useSyncExternalStore((f) => { subs.add(f); return () => { subs.delete(f); }; }, isSimple, isSimple);
 }

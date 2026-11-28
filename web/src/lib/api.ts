@@ -1,4 +1,6 @@
-import type { Bot, ChatFile, ComputerState, LiveState, Machine, MachineLogEntry, OutsideExchange, Routine, Row, SideChat, Toolkit, User } from '@shared/types';
+import type { ApiBody, ApiOp, ApiQuery, ApiRes } from '@shared/api-contract';
+import { apiPath } from '@shared/api-path';
+import type { Bot, ChatFile, ComputerState, Machine, MachineLogEntry, OutsideExchange, Row, Toolkit, User } from '@shared/types';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -63,6 +65,14 @@ export async function request<T>(method: string, path: string, body?: unknown, b
   }
 }
 const req = <T>(method: string, path: string, body?: unknown) => request<T>(method, path, body);
+/**
+ * A call named in the contract (server/src/api-contract.ts): the address comes from the name, and what it sends
+ * and answers are the server's own types, so the apps and the server cannot disagree unnoticed.
+ */
+export const call = <K extends ApiOp>(op: K, params: Record<string, string | number> = {}, body?: ApiBody<K>, query?: ApiQuery<K>): Promise<ApiRes<K>> => {
+  const { method, path } = apiPath(op, params, query as object | undefined);
+  return request<ApiRes<K>>(method, path.replace(/^\/api/, ''), body);
+};
 
 export interface NotifyPrefs {
   channels: { messages: boolean; approvals: boolean; jobs: boolean };
@@ -143,7 +153,31 @@ export interface UsageReport {
   byModel: ({ provider: string | null; model: string } & UsageCounts)[];
 }
 
+/** A saved login as the apps see it (server/src/vault.ts): never the username or password. */
+import type { LoginView, LoginInput } from '@shared/vault-types';
+export type SavedLogin = LoginView;
+export type SavedLoginInput = LoginInput;
+/** The activity trail (server/src/activity.ts): every allowed, refused and failed action, and what started it. */
+export type ActivityStarter = 'person' | 'script' | 'routine' | 'goal' | 'memory' | 'handoff' | 'self' | 'system' | 'earlier';
+export type ActivityOutcome = 'allowed' | 'refused' | 'failed';
+export interface ActivityRow {
+  id: number; at: number; botId: string | null; botName: string | null; forName: string | null;
+  by: { kind: ActivityStarter; id: string | null; name: string | null; text: string; phrase: string; unwatched: boolean };
+  source: string; tool: string; title: string; outcome: ActivityOutcome; how: string | null; detail: string | null; looks: boolean;
+}
+export interface ActivityFilter { botId?: string; outcome?: ActivityOutcome; by?: ActivityStarter | 'unwatched'; looks?: boolean; q?: string; before?: number }
+export interface ActivityPage { rows: ActivityRow[]; more: boolean; counts: { allowed: number; refused: number; failed: number; unwatched: number }; bots: { id: string; name: string }[] }
+const activityQuery = (f: ActivityFilter) => {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(f)) if (v !== undefined && v !== '' && v !== false) p.set(k, v === true ? '1' : String(v));
+  return p.toString();
+};
+
 export const api = {
+  activity: (f: ActivityFilter) => req<ActivityPage>('GET', `/activity?${activityQuery(f)}`),
+  activityExport: (f: ActivityFilter) => req<{ csv: string; rows: number; truncated: boolean; filename: string }>('POST', '/activity/export', { ...f, before: undefined }),
+  /** Everything waiting on the person across every bot (server needs-you.ts). Reading only. */
+  needsYou: () => call('GET /api/needs-you'),
   usage: (days: number) => req<UsageReport>('GET', `/usage?days=${days}&tz=${-new Date().getTimezoneOffset()}`),
   status: () => req<ServerStatus>('GET', '/status'),
   snapshotNow: () => req<{ ok: true; snapshot: { name: string; bytes: number; at: number } | null }>('POST', '/status/snapshot'),
@@ -166,7 +200,7 @@ export const api = {
   devLogin: (email: string, name?: string) => req<{ ok: true }>('POST', '/auth/dev', { email, name }),
   logout: () => req<{ ok: true }>('POST', '/auth/logout'),
 
-  bots: () => req<{ bots: Bot[]; live: LiveState[] }>('GET', '/bots'),
+  bots: () => call('GET /api/bots'),
   createBot: (b: Pick<Bot, 'name' | 'avatarShape' | 'avatarColor' | 'mode'>) => req<{ bot: Bot }>('POST', '/bots', b),
   // Notification settings (server/src/notify.ts), shared by the website, the Windows app and the YBots phone app.
   notifyPrefs: () => req<{ prefs: NotifyPrefs }>('GET', '/notify/prefs?profile=main'),
@@ -174,12 +208,12 @@ export const api = {
   listSummary: () => req<ListSummaryInfo>('GET', '/list-summary'),
   setListSummary: (patch: Partial<ListSummaryPrefs>) => req<{ prefs: ListSummaryPrefs }>('PUT', '/list-summary', patch),
   markRead: (id: string) => req<{ ok: true }>('POST', `/bots/${id}/read`),
-  rows: (id: string) => req<{ generation: number; rows: Row[] }>('GET', `/bots/${id}/rows`),
+  rows: (id: string) => call('GET /api/bots/{id}/rows', { id }),
   /** The rows just before `beforeSeq`, for "Show earlier messages". */
-  rowsBefore: (id: string, beforeSeq: number) => req<{ generation: number; rows: Row[] }>('GET', `/bots/${id}/rows?beforeSeq=${beforeSeq}&limit=200`),
+  rowsBefore: (id: string, beforeSeq: number) => call('GET /api/bots/{id}/rows', { id }, undefined, { beforeSeq, limit: 200 }),
   /** `clientId` names this send, so sending it again after a dropped connection can never post it twice. */
   send: (id: string, text: string, opts: { editOf?: number; attachments?: string[]; clientId?: string } = {}) =>
-    req<{ row: Row; duplicate?: boolean }>('POST', `/bots/${id}/messages`, { text, ...(opts.editOf ? { editOf: opts.editOf } : {}), ...(opts.attachments?.length ? { attachments: opts.attachments } : {}), ...(opts.clientId ? { clientId: opts.clientId } : {}) }),
+    call('POST /api/bots/{id}/messages', { id }, { text, ...(opts.editOf ? { editOf: opts.editOf } : {}), ...(opts.attachments?.length ? { attachments: opts.attachments } : {}), ...(opts.clientId ? { clientId: opts.clientId } : {}) }),
   /** Put a picture or file in the bot's Library (uploads/), to send with a message. */
   attach: async (id: string, file: Blob, name: string): Promise<ChatFile> => {
     let res: Response;
@@ -208,30 +242,42 @@ export const api = {
   setOwnerHidden: (id: string, hidden: boolean) => req<{ bot: Bot }>('PATCH', `/bots/${id}`, { ownerHidden: hidden }),
   version: () => req<{ version: string; commit: string | null; startedAt: number }>('GET', '/version'),
   /** Stop the bot's turn; in a group chat, all members answering it, or one with `member`. */
-  interrupt: (id: string, member?: string) => req<{ ok: true; stopped?: string[] }>('POST', `/bots/${id}/interrupt`, member ? { member } : undefined),
+  interrupt: (id: string, member?: string) => call('POST /api/bots/{id}/interrupt', { id }, member ? { member } : undefined),
   /** Add or take back your emoji reaction on a Bot's message. */
-  react: (id: string, seq: number, emoji: string) => req<{ ok: true; added: boolean }>('POST', `/bots/${id}/rows/${seq}/reactions`, { emoji }),
+  react: (id: string, seq: number, emoji: string) => call('POST /api/bots/{id}/rows/{seq}/reactions', { id, seq }, { emoji }),
   fresh: (id: string) => req<{ ok: true }>('POST', `/bots/${id}/fresh`),
   /** Undo "New conversation"; 409 with the reason once something was said in the new chat or after 10 minutes. */
   freshUndo: (id: string) => req<{ ok: true; generation: number }>('POST', `/bots/${id}/fresh/undo`),
 
   // Side chats (server/src/side-chats.ts): more conversations with the same bot. Each is read and written like
   // a chat with its own id (rows, send, interrupt, fresh, read, cards).
-  sideChats: (botId: string) => req<{ chats: SideChat[]; allowed: boolean; why: string | null }>('GET', `/bots/${botId}/side-chats`),
-  newSideChat: (botId: string, title?: string) => req<{ chat: SideChat }>('POST', `/bots/${botId}/side-chats`, title ? { title } : {}),
-  renameSideChat: (id: string, title: string) => req<{ ok: true; chats: SideChat[] }>('PATCH', `/side-chats/${id}`, { title }),
-  deleteSideChat: (id: string) => req<{ ok: true; undoUntil: number }>('DELETE', `/side-chats/${id}`),
-  restoreSideChat: (id: string) => req<{ ok: true; chats: SideChat[] }>('POST', `/side-chats/${id}/restore`),
+  sideChats: (botId: string) => call('GET /api/bots/{id}/side-chats', { id: botId }),
+  newSideChat: (botId: string, title?: string) => call('POST /api/bots/{id}/side-chats', { id: botId }, title ? { title } : {}),
+  renameSideChat: (id: string, title: string) => call('PATCH /api/side-chats/{id}', { id }, { title }),
+  deleteSideChat: (id: string) => call('DELETE /api/side-chats/{id}', { id }),
+  restoreSideChat: (id: string) => call('POST /api/side-chats/{id}/restore', { id }),
 
-  approve: (approvalId: string, decision: 'allow' | 'always' | 'deny', digest: string | undefined) => {
+  /** Turn off what this conversation allows without asking (server/src/conversation-allows.ts). */
+  turnOffAllowedHere: (chatId: string, id?: string) => req<{ ok: true; turnedOff: number }>('POST', `/bots/${chatId}/allowed-here/off`, id ? { id } : {}),
+  approve: (approvalId: string, decision: 'allow' | 'always' | 'conversation' | 'deny', digest: string | undefined) => {
     if (!digest) return Promise.reject(new Error('This card is too old to answer. Ask for a new card.'));
-    return req<{ ok: true }>('POST', `/approvals/${approvalId}`, { decision, digest });
+    return call('POST /api/approvals/{id}', { id: approvalId }, { decision, digest });
   },
   /** A secure input card (server/src/browser-cards.ts): the typed value goes to the bot's browser, never to the chat. */
-  secretInput: (approvalId: string, value: string, digest: string | undefined) => {
+  secretInput: (approvalId: string, value: string, digest: string | undefined, save = false) => {
     if (!digest) return Promise.reject(new Error('This card is too old to answer. Ask for a new card.'));
-    return req<{ ok: true }>('POST', `/approvals/${approvalId}/secret`, { value, digest });
+    return req<{ ok: true }>('POST', `/approvals/${approvalId}/secret`, { value, digest, ...(save ? { save: true } : {}) });
   },
+  /** Sign in on a saved-login card (server/src/vault.ts): only the login's owner; the server types it into the page. */
+  useSavedLogin: (approvalId: string, digest: string | undefined) => {
+    if (!digest) return Promise.reject(new Error('This card is too old to answer. Ask for a new card.'));
+    return req<{ ok: true }>('POST', `/approvals/${approvalId}/login`, { digest });
+  },
+  /** Settings > Saved logins: the signed-in person's own logins. Never their values. */
+  vaultLogins: () => req<{ logins: SavedLogin[]; bots: { id: string; name: string }[] }>('GET', '/vault/logins'),
+  addVaultLogin: (b: SavedLoginInput) => req<{ ok: true; login: SavedLogin }>('POST', '/vault/logins', b),
+  updateVaultLogin: (id: string, b: Partial<SavedLoginInput>) => req<{ ok: true; login: SavedLogin }>('PATCH', `/vault/logins/${id}`, b),
+  deleteVaultLogin: (id: string) => req<{ ok: true }>('DELETE', `/vault/logins/${id}`),
   /** A posting plan card (server/src/posting.ts): the days left switched on, approved once or always. */
   postingPlan: (approvalId: string, days: string[], decision: 'allow' | 'always', digest: string | undefined) => {
     if (!digest) return Promise.reject(new Error('This card is too old to answer. Ask for a new card.'));
@@ -247,8 +293,8 @@ export const api = {
   dismiss: (id: string, card: CardRef) => req<{ ok: true }>('POST', cardPath(id, card, 'dismiss')),
   saveProposedSkill: (id: string, card: CardRef, edit?: { name: string; description: string; body: string }) => req<{ ok: true; skillId: string }>('POST', cardPath(id, card, 'save-skill'), edit ?? {}),
 
-  routines: (id: string) => req<{ routines: Routine[] }>('GET', `/bots/${id}/routines`),
-  setRoutine: (rid: string, enabled: boolean) => req<{ routine: Routine }>('PATCH', `/routines/${rid}`, { enabled }),
+  routines: (id: string) => call('GET /api/bots/{id}/routines', { id }),
+  setRoutine: (rid: string, enabled: boolean) => call('PATCH /api/routines/{id}', { id: rid }, { enabled }),
 
   computer: () => req<{ computer: ComputerState }>('GET', '/computer'),
   ensureComputer: () => req<{ computer: ComputerState }>('POST', '/computer/ensure'),

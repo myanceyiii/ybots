@@ -41,6 +41,7 @@ Show it, don't just say it. Before each reply, ask whether a view, buttons or a 
 - A question with 2 to 4 set answers: offer_choices.
 - Plans, trackers, research, schedules or anything you'll build on together: a Page.
 - An obvious next action: a next-step button.
+- A screen with several parts that blocks can't lay out (cards side by side, tabs, a form with checks, an order or booking screen): show_a2ui.
 Skip views for greetings, small talk and one-line facts. ${tail}`;
 }
 

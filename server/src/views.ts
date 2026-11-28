@@ -10,6 +10,7 @@ import { runCalc, type CalcInput } from './calc.js';
 import { calcBlock, calcMessage, calcValues, cleanCalcValues, inputText } from './calc-block.js';
 import crypto from 'node:crypto';
 import { withPin } from './board-pin.js';
+import { applyA2ui, buttonAction, failedChecks, getAt, inputValue, reachable, scopeOk, setAt, surfaceText, valuePath, A2UI_INPUTS, type A2uiCtx, type A2uiSurface } from './a2ui.js';
 import type { CardBody, ViewBlock } from './types.js';
 
 /**
@@ -25,7 +26,7 @@ import type { CardBody, ViewBlock } from './types.js';
  *    (the route is for signed-in people only).
  */
 
-export const VIEW_TYPES = ['heading', 'text', 'callout', 'table', 'chart', 'stats', 'progress', 'checklist', 'choice', 'form', 'button', 'link', 'code', 'divider', 'calc'] as const;
+export const VIEW_TYPES = ['heading', 'text', 'callout', 'table', 'chart', 'stats', 'progress', 'checklist', 'choice', 'form', 'button', 'link', 'code', 'divider', 'calc', 'a2ui'] as const;
 export type ViewType = (typeof VIEW_TYPES)[number];
 const PAGE_KINDS = new Set<string>(['heading', 'text', 'callout', 'table', 'chart', 'checklist', 'choice', 'form', 'button', 'code', 'divider']);
 
@@ -83,6 +84,16 @@ function oneBlock(raw: any, id: string): ViewBlock | string {
       return { id, type, label: s(raw?.label, 120), value, max, ...(note ? { note: s(note, 120) } : {}), ...(raw?.live === true ? { live: true } : {}) };
     }
     case 'calc': return calcBlock(raw, id);
+    case 'a2ui': {
+      // A2UI 1.0 (a2ui.ts): `messages` (createSurface / updateComponents / updateDataModel), or the short form
+      // {components, dataModel}. On update_view the block's own surface is the start and new messages apply on it.
+      const prev = raw?.surface && typeof raw.surface === 'object' && raw.surface.components && raw.surface.catalogId ? raw.surface as A2uiSurface : null;
+      const input = raw?.messages ?? (prev ? (raw?.components ? { surfaceId: prev.surfaceId, components: raw.components, dataModel: raw.dataModel } : null) : raw?.surface ?? (raw?.components ? { components: raw.components, dataModel: raw.dataModel ?? raw.data } : null));
+      if (!prev && !input) return 'an a2ui block needs messages (A2UI 1.0 createSurface/updateComponents/updateDataModel) or components';
+      const { surface, problems } = input ? applyA2ui(prev, input) : { surface: prev, problems: [] as string[] };
+      if (!surface || !surface.components.root) return `a2ui: ${problems.join('; ') || 'nothing to draw'}`;
+      return { id, type, surface, ...(raw?.sent ? { sent: raw.sent } : {}), ...(problems.length ? { _problems: problems } : {}) };
+    }
     case 'link': {
       const url = safeUrl(raw?.url);
       return url ? { id, type, label: s(raw?.label, 80) || url, url } : 'a link needs an https url';
@@ -91,6 +102,12 @@ function oneBlock(raw: any, id: string): ViewBlock | string {
   return `unknown block type "${type}"`;
 }
 
+
+/** Warnings an a2ui block carries back from its check (drawn anyway), moved into the bot's problem list. */
+function takeProblems(b: any, where: string, problems: string[]): ViewBlock {
+  if (Array.isArray(b._problems)) { problems.push(...b._problems.map((p: string) => `${where}: ${p}`)); delete b._problems; }
+  return b;
+}
 
 /** A bot's view, checked. Bad blocks are dropped and reported back to the bot so it can fix them. */
 export function makeView(title: unknown, rawBlocks: unknown): { card: Card; problems: string[] } {
@@ -104,7 +121,7 @@ export function makeView(title: unknown, rawBlocks: unknown): { card: Card; prob
     while (used.has(id)) id = `${id}_${i + 1}`;
     const b = oneBlock(raw, id);
     if (typeof b === 'string') problems.push(`block ${i + 1}: ${b}`);
-    else { used.add(id); blocks.push(b); }
+    else { used.add(id); blocks.push(takeProblems(b, `block ${i + 1}`, problems)); }
   });
   const t = s(title, 120).trim();
   const card: Card = { type: 'card', card: 'view', title: t, blocks, text: '' };
@@ -145,6 +162,7 @@ export function viewText(v: { title: string; blocks: ViewBlock[] }): string {
         break;
       }
       case 'code': out.push(`\`\`\`${b.lang ?? ''}\n${b.code}\n\`\`\``); break;
+      case 'a2ui': out.push(surfaceText(b.surface)); break;
     }
   }
   return out.filter(Boolean).join('\n\n').slice(0, 20_000);
@@ -156,13 +174,14 @@ export class ViewError extends Error { constructor(msg: string, public status = 
  * A person's change to a view: tick, pick, type, or send. Returns the new card and, for a send, the chat
  * message to post as that person. Only the parts a person may change are touched; the bot's content is not.
  */
-export function applyViewOp(card: Card, op: any, by?: string): { card: Card; message?: string; context?: string } {
+export function applyViewOp(card: Card, op: any, by?: string): { card: Card; message?: string; context?: string; mention?: boolean } {
   const blocks = card.blocks.map((b) => ({ ...b })) as any[];
   const b = blocks.find((x) => x.id === op?.block);
   if (!b) throw new ViewError('That part of the view is gone.');
   const where = card.title ? ` ("${card.title}")` : '';
   let message: string | undefined;
   let context: string | undefined;
+  let mention = false;
   switch (op.op) {
     case 'check': {
       if (b.type !== 'checklist') throw new ViewError('check works on checklists');
@@ -200,6 +219,34 @@ export function applyViewOp(card: Card, op: any, by?: string): { card: Card; mes
       b.values = cleanCalcValues(b, op.values);
       break;
     }
+    case 'a2ui-set': {
+      if (b.type !== 'a2ui') throw new ViewError('a2ui-set works on A2UI views');
+      b.surface = a2uiSet(b.surface, op);
+      break;
+    }
+    case 'a2ui-action': {
+      if (b.type !== 'a2ui') throw new ViewError('a2ui-action works on A2UI views');
+      // Edits still on their way from the app go first, so the action sees what the person sees.
+      let surface: A2uiSurface = b.surface;
+      for (const e of (Array.isArray(op.edits) ? op.edits : []).slice(0, 40)) surface = a2uiSet(surface, e);
+      b.surface = surface;
+      const comp = surface.components[String(op.component ?? '')];
+      if (!comp || comp.component !== 'Button' || !reachable(surface).has(comp.id)) throw new ViewError('That button is gone.');
+      if (!scopeOk(op.scope)) throw new ViewError('bad scope');
+      const ctx: A2uiCtx = { data: surface.data, scope: op.scope, ...(Number.isInteger(op.index) ? { index: op.index } : {}) };
+      const failed = failedChecks(comp, ctx);
+      if (failed.length) throw new ViewError(failed[0]);
+      const act = buttonAction(surface, comp, ctx);
+      if (!act || act.kind !== 'event') throw new ViewError('That button only opens a link.');
+      if (b.sent?.at && now() - b.sent.at < 1000) throw new ViewError('Already sent.', 409);
+      b.sent = { component: comp.id, at: now(), ...(by ? { by: s(by, 80) } : {}) };
+      // The person's line reads like what they pressed; the bot also gets the standard A2UI action message.
+      message = act.userMessage || act.label || act.name;
+      const action = { version: '1.0', action: { name: act.name, surfaceId: surface.surfaceId, sourceComponentId: comp.id, timestamp: new Date(now()).toISOString(), context: act.context, ...(act.userMessage ? { userMessage: act.userMessage } : {}), ...(surface.sendDataModel ? { metadata: { a2uiRendererDataModel: { surfaces: { [surface.surfaceId]: surface.data } } } } : {}) } };
+      context = `${message}\n[A2UI action from your view${where}: ${JSON.stringify(action).slice(0, 8000)}]`;
+      mention = true;
+      break;
+    }
     case 'send': {
       if (b.type === 'calc') {
         // A calculator can be sent again after more changes: the bot gets the numbers as they are now.
@@ -228,7 +275,26 @@ export function applyViewOp(card: Card, op: any, by?: string): { card: Card; mes
   // A tick can finish a pinned board (board-pin.ts), so its pin is worked out again.
   const next: Card = withPin({ ...card, blocks }, { now: now() });
   next.text = viewText(next);
-  return { card: next, ...(message ? { message } : {}), ...(context ? { context } : {}) };
+  return { card: next, ...(message ? { message } : {}), ...(context ? { context } : {}), ...(mention ? { mention } : {}) };
+}
+
+/**
+ * A person sets an A2UI input (a2ui.ts): only the data its own `value` binding points at changes, with a value
+ * of the input's kind. The bot's components never change here.
+ */
+function a2uiSet(surface: A2uiSurface, op: any): A2uiSurface {
+  const comp = surface.components[String(op?.component ?? '')];
+  if (!comp || !A2UI_INPUTS.has(comp.component) || !reachable(surface).has(comp.id)) throw new ViewError('That field is gone.');
+  if (!scopeOk(op.scope)) throw new ViewError('bad scope');
+  const ctx: A2uiCtx = { data: surface.data, scope: op.scope };
+  const path = valuePath(comp, ctx);
+  if (!path) return surface;
+  const value = inputValue(comp, ctx, op.value);
+  if (value === null) throw new ViewError('That value doesn’t fit the field.');
+  if (getAt(surface.data, path) === value) return surface;
+  const data = setAt(surface.data, path, value);
+  if (JSON.stringify(data).length > 64_000) throw new ViewError('Too much typed into this view.');
+  return { ...surface, data };
 }
 
 /**
@@ -284,7 +350,19 @@ function carryState(old: any, next: any): any {
     case 'calc':
       if (old.values) out.values = cleanCalcValues(next, old.values);
       break;
+    case 'a2ui':
+      // A whole new block from the bot: what the person typed stays where the bot's new data says nothing.
+      if (old.surface?.surfaceId === next.surface.surfaceId) out.surface = { ...next.surface, data: mergeData(old.surface.data, next.surface.data) };
+      if (old.sent) out.sent = old.sent;
+      break;
   }
+  return out;
+}
+
+function mergeData(old: any, next: any): any {
+  if (!next || typeof next !== 'object' || Array.isArray(next) || !old || typeof old !== 'object' || Array.isArray(old)) return next === undefined ? old : next;
+  const out: any = { ...old };
+  for (const [k, v] of Object.entries(next)) out[k] = mergeData(old[k], v);
   return out;
 }
 
@@ -317,7 +395,9 @@ export function updateView(botId: string, viewId: string, a: { title?: unknown; 
       const { id: _id, type: _type, ...fields } = ch as any;
       const merged = oneBlock({ ...blocks[at], ...fields, type: blocks[at].type }, blocks[at].id);
       if (typeof merged === 'string') { problems.push(`change ${i + 1}: ${merged}`); continue; }
-      blocks = blocks.map((b, j) => (j === at ? carryState(b, merged) : b));
+      takeProblems(merged, `change ${i + 1}`, problems);
+      // An a2ui change applies its messages on the surface as it is, so the person's typing is already there.
+      blocks = blocks.map((b, j) => (j === at ? (merged.type === 'a2ui' ? merged : carryState(b, merged)) : b));
     }
   }
   const title = a.title !== undefined ? s(a.title, 120).trim() : card.title;
@@ -341,6 +421,8 @@ export function viewToPageBlocks(card: Card): any[] {
       case 'stats': out.push({ type: 'table', title: b.title, columns: ['', 'Value', 'Note'], rows: b.items.map((x: any) => [x.label, x.value, x.note ?? '']) }); break;
       case 'progress': out.push({ type: 'text', md: `**${b.label}:** ${b.value} of ${b.max} (${Math.round((b.value / b.max) * 100)}%)${b.note ? `. ${b.note}` : ''}` }); break;
       case 'link': out.push({ type: 'text', md: `[${b.label}](${b.url})` }); break;
+      // Pages have no A2UI block yet, so the interface goes in as its text, with what the person entered.
+      case 'a2ui': out.push({ type: 'text', md: surfaceText(b.surface) }); break;
       // A calculator stays a calculator on the Page, with the person's numbers, so it keeps working there.
       case 'calc': { const { id: _id, sentAt: _s, ...rest } = b; out.push({ ...rest, values: calcValues(b) }); break; }
       default: { const { id: _id, sentAt: _s, ...rest } = b; out.push(rest); }

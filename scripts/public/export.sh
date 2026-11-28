@@ -11,22 +11,26 @@
 #   --out    where the public copy goes (must not exist yet)
 #   --ref    commit to export (default HEAD; uncommitted changes are never included)
 #   --test   also run `npm ci`, `npm run build` and `npm test` in the copy, as a new user would
+#   --raw    stop after the overlay and the left-out paths: no patch, no check, no commit (release.sh
+#            uses it to remake a patch that stopped applying; --deny is not needed)
 #
 # Then:  cd <out> && git remote add origin git@github.com:<you>/<public repo>.git && git push -u origin main
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-REF=HEAD; DENY=; OUT=; TEST=0; PATCHES=()
+REF=HEAD; DENY=; OUT=; TEST=0; RAW=0; PATCHES=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --deny) DENY=$2; shift 2 ;; --out) OUT=$2; shift 2 ;; --ref) REF=$2; shift 2 ;; --test) TEST=1; shift ;;
+    --deny) DENY=$2; shift 2 ;; --out) OUT=$2; shift 2 ;; --ref) REF=$2; shift 2 ;; --test) TEST=1; shift ;; --raw) RAW=1; shift ;;
     --patch) PATCHES+=("$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"); shift 2 ;;
     *) echo "unknown option $1"; exit 2 ;;
   esac
 done
-[ -n "$DENY" ] && [ -n "$OUT" ] || { sed -n '2,16p' "$0"; exit 2; }
+[ -n "$OUT" ] && { [ -n "$DENY" ] || [ $RAW = 1 ]; } || { sed -n '2,18p' "$0"; exit 2; }
 [ -e "$OUT" ] && { echo "$OUT already exists; give a new folder"; exit 2; }
-DENY=$(cd "$(dirname "$DENY")" && pwd)/$(basename "$DENY")
-case "$DENY" in "$ROOT"/*) echo "keep the deny list outside the repository"; exit 2 ;; esac
+if [ $RAW = 0 ]; then
+  DENY=$(cd "$(dirname "$DENY")" && pwd)/$(basename "$DENY")
+  case "$DENY" in "$ROOT"/*) echo "keep the deny list outside the repository"; exit 2 ;; esac
+fi
 
 mkdir -p "$OUT"
 git -C "$ROOT" archive --format=tar "$REF" | tar -x -C "$OUT"
@@ -42,6 +46,7 @@ while IFS= read -r p; do
 done < "$ROOT/scripts/public/exclude.txt"
 # The household-skills folder is gitignored except its README, which points at private files.
 rm -rf "$OUT/deploy/household-skills"
+[ $RAW = 1 ] && { echo "== raw copy of $(git -C "$ROOT" rev-parse --short "$REF") in $OUT (no patch, not checked)"; exit 0; }
 for p in "${PATCHES[@]}"; do
   (cd "$OUT" && git apply --binary --whitespace=nowarn "$p") || { echo "FAIL: $p no longer applies to $REF; make it again"; exit 1; }
   echo "== applied $(basename "$p")"

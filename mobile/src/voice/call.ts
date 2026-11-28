@@ -91,6 +91,7 @@ class VoiceCall {
   /** The approval card whose "say yes or no" was last read out, and the one in play when you started speaking. */
   private heardCard: Card | null = null;
   private cardAtSpeech: Card | null = null;
+  private playWaiters: (() => void)[] = [];
   private lastHeardAt = 0;
   private lastSpokeAt = 0;
   private lastStatusAt = 0;
@@ -121,7 +122,7 @@ class VoiceCall {
       voiceNative.on('onSpeechStart', () => this.speechStarted()),
       voiceNative.on('onUtterance', (e) => { setV({ listening: false }); if (e.path) void this.sendTurn(e.path); }),
       voiceNative.on('onPlayback', (e) => {
-        if (e.playing) setV({ speaking: true });
+        if (e.playing) { setV({ speaking: true }); this.playWaiters.splice(0).forEach((f) => f()); }
         else { this.lastSpokeAt = Date.now(); setV({ speaking: false }); this.idleWaiters.splice(0).forEach((f) => f()); this.syncThinking(); }
       }),
       voiceNative.on('onError', (e) => { if (!this.ended) this.end(e.message); }),
@@ -236,6 +237,21 @@ class VoiceCall {
     if (!captionId.startsWith('a-')) this.caption(`${captionId}-${Date.now()}`, 'assistant', clean, true);
   }
 
+  /**
+   * playStream resolves once the prompt's speech starts arriving, which can be while earlier sentences
+   * are still playing. A spoken yes answers the card only once the prompt has started and played to the
+   * end (the phone reports idle only when nothing is left in its queue) without being talked over.
+   */
+  private async bindWhenHeard(card: Card) {
+    const gen = this.gen;
+    if (!voiceNative.isPlaying()) {
+      const began = await new Promise<boolean>((resolve) => { const t = setTimeout(() => resolve(false), 15_000); this.playWaiters.push(() => { clearTimeout(t); resolve(true); }); });
+      if (!began) return;
+    }
+    await this.whenIdle(120_000);
+    if (!this.ended && gen === this.gen && !voiceNative.isPlaying()) this.heardCard = card;
+  }
+
   private whenIdle(maxMs: number): Promise<void> {
     if (!voiceNative.isPlaying()) return Promise.resolve();
     return new Promise((resolve) => {
@@ -278,7 +294,7 @@ class VoiceCall {
         const byVoice = !b.mail && !!this.sess?.approvalsByVoice && !!b.approvalId && !!b.digest;
         // Only once this card has been read out does a spoken yes or no answer it, and only it.
         const card = byVoice ? { approvalId: b.approvalId as string, digest: b.digest as string } : null;
-        this.say(`I need your OK to ${what}. ${byVoice ? 'Say yes to approve, or no to cancel.' : 'It is waiting for you on screen.'}`, 'approval', card ? () => { this.heardCard = card; } : undefined);
+        this.say(`I need your OK to ${what}. ${byVoice ? 'Say yes to approve, or no to cancel.' : 'It is waiting for you on screen.'}`, 'approval', card ? () => { void this.bindWhenHeard(card); } : undefined);
       } else if (b?.type === 'card' && b.card === 'question' && b.status === 'pending' && !this.announcedCards.has(r.seq)) {
         this.announcedCards.add(r.seq);
         this.say(`${b.question} The choices are on screen, or just tell me.`, 'question');

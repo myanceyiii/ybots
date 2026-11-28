@@ -26,6 +26,7 @@ export class LiveEngine {
   mode: 'live' | 'chunked';
   private ws: WebSocket | null = null;
   private open = false;
+  private stopping = false;
   private waiting: ArrayBuffer[] = [];
   private finalText: string | null = null;
   private onFinal: (() => void) | null = null;
@@ -54,6 +55,8 @@ export class LiveEngine {
         this.open = true;
         if (this.openTimer) clearTimeout(this.openTimer);
         for (const b of this.waiting.splice(0)) ws.send(b);
+        // Finished before the service was ready: the stop it could not be sent then goes now.
+        if (this.stopping) ws.send(JSON.stringify({ type: 'stop' }));
       } else if (m.type === 'text' && !this.done) {
         this.o.onText({ settled: m.settled ?? '', pending: m.pending ?? '' });
       } else if (m.type === 'final') {
@@ -103,7 +106,8 @@ export class LiveEngine {
         this.onFinal = resolve;
         setTimeout(resolve, FINAL_MS);
       });
-      if (this.open) ws.send(JSON.stringify({ type: 'stop' }));
+      this.stopping = true;
+      if (this.open && ws.readyState === WebSocket.OPEN) { try { ws.send(JSON.stringify({ type: 'stop' })); } catch { /* closing: the fallback below takes over */ } }
       await got;
       if (this.mode === 'live' && this.finalText !== null) {
         this.done = true;

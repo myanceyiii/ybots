@@ -45,6 +45,7 @@
 .panel-row__title, .panel-row__sub { display: block; font-size: 13px; line-height: 18px; letter-spacing: 0.195px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .panel-row__title { color: var(--color-ink); }
 .panel-row__sub { color: var(--color-text-secondary); }
+.panel-row__sub--warn { color: var(--color-danger-text); }
 .panel-row__meta { font-size: 12px; line-height: 16px; letter-spacing: 0.12px; color: var(--color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .panel-empty { padding: 10px 8px; font-size: 13px; line-height: 18px; letter-spacing: 0.195px; color: var(--color-text-tertiary); }
 .panel-empty--center { text-align: center; padding: 32px 16px; }

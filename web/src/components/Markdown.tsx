@@ -4,6 +4,7 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { splitRawOutput } from '@shared/raw-output';
 import { useSimple } from '../lib/simple';
+import { loadsOnItsOwn, safeLink } from '@shared/safe-url';
 
 /** A code block with its language named and a Copy button. */
 function CodeBlock({ children }: { children?: ReactNode }) {
@@ -25,12 +26,30 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   );
 }
 
+/**
+ * A picture on another site. Loading it on its own would send that site whatever the address carries
+ * (a reply could put private words in it), so it shows as a button naming the site until tapped.
+ */
+function ExternalPicture({ src, alt }: { src: string; alt: string }) {
+  const [shown, setShown] = useState(false);
+  const link = safeLink(src);
+  if (!link) return alt ? <span>{alt}</span> : null;
+  if (shown) return <img src={link} alt={alt} loading="lazy" className="md-img" referrerPolicy="no-referrer" onClick={() => useStore.getState().set({ lightbox: { src: link, name: alt || 'Picture' } })} />;
+  return (
+    <button type="button" className="md-img-ask" onClick={() => setShown(true)} title={link}>
+      Show picture from {new URL(link).hostname}{alt ? ` · ${alt}` : ''}
+    </button>
+  );
+}
+
 const components: Components = {
   pre: ({ node: _n, children }) => <CodeBlock>{children}</CodeBlock>,
-  // A picture in an answer opens large on a click.
-  img: ({ node: _n, src, alt, ...props }) => (
-    <img {...props} src={src} alt={alt ?? ''} loading="lazy" className="md-img" onClick={() => { if (typeof src === 'string') useStore.getState().set({ lightbox: { src, name: alt || 'Picture' } }); }} />
-  ),
+  // A picture in an answer opens large on a click. One on another site waits for a tap (ExternalPicture).
+  img: ({ node: _n, src, alt, ...props }) => {
+    if (!src || typeof src !== 'string') return alt ? <span>{alt}</span> : null;
+    if (!loadsOnItsOwn(src)) return <ExternalPicture src={src} alt={alt ?? ''} />;
+    return <img {...props} src={src} alt={alt ?? ''} loading="lazy" className="md-img" onClick={() => useStore.getState().set({ lightbox: { src, name: alt || 'Picture' } })} />;
+  },
   a: ({ node: _n, ...props }) => <a {...props} target="_blank" rel="noreferrer noopener" />,
   table: ({ node: _n, ...props }) => (
     <div className="md-table"><table {...props} /></div>

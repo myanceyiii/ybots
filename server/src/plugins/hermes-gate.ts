@@ -4,8 +4,8 @@ import { db } from '../db.js';
 import '../db-config.js'; // bots.auto_save_skills
 import type { Policy } from '../agent/tools.js';
 import { runStages, stricter, type Decision } from './policy.js';
-import { ruleFor } from '../allow-rules.js';
-import { freeRunVerdict, maintainerVerdict } from '../maintainer-guard.js';
+import { standingAllow } from '../conversation-allows.js';
+import { freeRunVerdict, maintainerVerdict, touchesSecret } from '../maintainer-guard.js';
 import { hermesMcpKind, hermesMcpToolOf, secretRead } from '../hermes-mcp-tools.js';
 
 /**
@@ -77,9 +77,17 @@ export function isSkillSave(args: unknown): boolean {
   return AUTO_SAVE_ACTIONS.has(String(a.action));
 }
 
+/** Hermes' built-in readers, and whether a call of theirs names a secret file or firm data in any string argument. */
+const FILE_READ_TOOLS = new Set(['read_file', 'search_files']);
+const FIRM_DATA = /\bsheldon\b|\/silo\/|slack[-_]?(user|app)?[-_]?token|cleft-sheldon/i;
+export function readsGuarded(args: unknown): boolean {
+  const a = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
+  return Object.values(a).some((v) => typeof v === 'string' && (touchesSecret(` ${v}`) || FIRM_DATA.test(v)));
+}
+
 const autoSaves = (botId: string) => !!(db.prepare('SELECT auto_save_skills FROM bots WHERE id=?').get(botId) as { auto_save_skills?: number } | undefined)?.auto_save_skills;
 
-export function hermesPolicy(userId: string, botId: string, tool: string, args: unknown, hints: { danger?: unknown } = {}): Policy {
+export function hermesPolicy(userId: string, botId: string, tool: string, args: unknown, hints: { danger?: unknown } = {}, chatId?: string): Policy {
   const key = hermesKey(tool);
   if (!TOOL.test(tool)) return { decision: 'block', key, title: hermesTitle(tool), asks: [] };
   let base: Decision;
@@ -111,6 +119,15 @@ export function hermesPolicy(userId: string, botId: string, tool: string, args: 
   // hermes-mcp-tools.ts. Reads run; risky tools ask on a card that cannot be "Always allow"ed.
   const viaMcp = hermesMcpToolOf(tool);
   const mcpKind = viaMcp ? (secretRead(viaMcp, args) ? 'risky' : hermesMcpKind(viaMcp)) : null;
+  // Hermes' own file readers are on the read-only list, but not for a secret file (.env, gate.json with this
+  // bot's /mcp token, keys, ~/.ssh, ...) or across Sheldon's firm-data boundary: those ask every time.
+  if (stored !== 'blocked' && FILE_READ_TOOLS.has(tool) && readsGuarded(args)) {
+    const staged = runStages({ userId, botId, name: key, appId: 'hermes', tool, args });
+    return {
+      decision: stricter('ask', staged.decision), key, toolkit: 'hermes', title: hermesTitle(tool), asks: [],
+      detail: 'Needs your OK every time: it reads a secret file or crosses the firm-data boundary.',
+    };
+  }
   if (stored !== 'blocked' && mcpKind === 'risky') {
     const staged = runStages({ userId, botId, name: key, appId: 'hermes', tool, args });
     return { decision: stricter('ask', staged.decision), key, toolkit: 'hermes', title: hermesTitle(tool), asks: [] };
@@ -121,12 +138,14 @@ export function hermesPolicy(userId: string, botId: string, tool: string, args: 
   // An older "Always allow" stored for every bot still counts.
   else if (stored === 'always_allow') base = 'allow';
   else if (tool === 'skill_manage' && isSkillSave(args) && autoSaves(botId)) base = 'allow';
-  else if ((viaRule = ruleFor(botId, key) ?? undefined)) base = 'allow';
+  // This bot's "Always allow" rule, else "Allow for this conversation" in the chat making the call.
+  else if ((viaRule = standingAllow(botId, chatId, key) ?? undefined)) base = 'allow';
   else { base = 'ask'; rememberable = true; }
   const staged = runStages({ userId, botId, name: key, appId: 'hermes', tool, args });
   const decision = stricter(base, staged.decision);
   return {
     decision, key, toolkit: 'hermes', title: hermesTitle(tool),
+    ...(tool === 'send_message' ? { kind: 'send' as const } : {}),
     asks: decision === 'ask' && rememberable && staged.decision === 'allow' ? [key] : [],
     ...(decision === 'allow' && viaRule ? { viaRule } : {}),
   };

@@ -33,6 +33,8 @@ export function usePluginSwitch<T extends Data>(setData: (f: (d: T) => T) => voi
       paint(pluginId, botId, r.after.enabled, r.after.fromDefault);
       show(undo ? null : r);
     } catch (e) {
+      // Refused (another bot has a one-bot-only plugin) or not sent: the switch goes back to where it was.
+      if (on !== null) paint(pluginId, botId, !on, false);
       onError((e as Error).message);
       show(null);
       throw e;

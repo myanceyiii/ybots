@@ -7,8 +7,9 @@
  *
  * - Pins itself when a view tracks work: a progress bar the bot marked live or that counts steps, or any
  *   progress bar or unticked checklist the bot moves with update_view.
- * - The bot can pin or unpin with `pin` on show_view / update_view. A person pins or unpins from the card or
- *   the dock (POST /bots/:id/cards/:seq/pin); a person's unpin sticks until the person or the bot pins it again.
+ * - The bot can pin any view with `pin: true`. `pin: false` unpins or keeps out any view except a job (a live
+ *   or step-counting bar that is not full): a job always pins and lets go when it is done or stopped. A person pins or unpins from the
+ *   card or the dock (POST /bots/:id/cards/:seq/pin); a person's unpin sticks until the person or the bot pins it again.
  * - `doneAt` is set once every bar is full and every item is ticked; the apps let it go 10 minutes later.
  *   The apps also show "Paused" after an hour with no update and let it go after a day (see BOARD_TIMES).
  * - A bar marked stopped when its turn ended (view-stall.ts) shows "Stopped" and is let go after an hour,
@@ -52,9 +53,14 @@ export function nextPin(card: { blocks: Block[]; pin?: Pin; quick?: boolean }, o
   if (card.quick) return card.pin;
   const prev = card.pin;
   let pin: Pin | undefined;
+  // A job (a live or step-counting bar that is not full; a gauge the bot moves is not one) pins itself and
+  // stays pinned until it is done or stopped: the bot's pin: false is ignored for it, and an older bot unpin
+  // ends when the bot moves the job. Only a person's unpin sticks.
+  const job = tracksWork(card.blocks, false);
   if (o.person !== undefined) pin = { on: o.person, by: 'person', at: o.now };
-  else if (o.bot !== undefined) pin = { on: o.bot, by: 'bot', at: o.now };
-  else if (prev) pin = prev;
+  else if (o.bot === true) pin = { on: true, by: 'bot', at: o.now };
+  else if (o.bot === false) pin = !job ? { on: false, by: 'bot', at: o.now } : prev?.on ? prev : { on: true, by: 'auto', at: o.now };
+  else if (prev && !(prev.by === 'bot' && !prev.on && job && o.moved)) pin = prev;
   else if (tracksWork(card.blocks, !!o.moved)) pin = { on: true, by: 'auto', at: o.now };
   if (!pin) return undefined;
   const out: Pin = { on: pin.on, by: pin.by, at: pin.at };

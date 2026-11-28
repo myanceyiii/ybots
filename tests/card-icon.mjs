@@ -7,11 +7,10 @@ const c = await import('../server/dist/card-icon.js');
 let failures = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failures++; console.log(`FAIL ${name}\n     ${e.message.split('\n').join('\n     ')}`); } };
 
-test('the Android copy is the same file under its one-line header', () => {
+test('the Android copy is the same file, word for word (scripts/shared-copies.mjs)', () => {
   const mobile = fs.readFileSync(new URL('../mobile/src/cardIcon.ts', import.meta.url), 'utf8');
   const server = fs.readFileSync(new URL('../server/src/card-icon.ts', import.meta.url), 'utf8');
-  assert.match(mobile.split('\n')[0], /^\/\/ Verbatim copy of server\/src\/card-icon\.ts/);
-  assert.equal(mobile.split('\n').slice(1).join('\n'), server.split('\n').slice(1).join('\n'));
+  assert.equal(mobile, server);
 });
 test('known apps show their own logo', () => {
   assert.equal(c.cardIconId({ toolkit: 'actual', toolkitName: 'Actual Budget', tool: 'actual__actual_budgets_setCarryover' }), 'actual');

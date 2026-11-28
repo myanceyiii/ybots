@@ -326,7 +326,7 @@ extrasApi.delete('/bots/:id/conversations/:generation', (c) => {
   if (!Number.isInteger(generation) || generation < 1) return c.json({ error: 'bad request' }, 400);
   const r = deleteConversation(b.id, generation);
   if (!r.ok) return c.json({ error: r.reason }, r.reason === 'not found' ? 404 : 409);
-  console.log(`[chat] ${c.get('user').email} deleted conversation ${generation} of ${b.id} (${r.rows} rows)`);
+  console.log(`[chat] account ${c.get('user').id} deleted conversation ${generation} of ${b.id} (${r.rows} rows)`);
   return c.json({ ok: true, conversations: listConversations(b.id) });
 });
 

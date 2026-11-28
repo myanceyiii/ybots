@@ -64,8 +64,41 @@ async function service(path: string, init: RequestInit = {}): Promise<any> {
     headers: { 'content-type': 'application/json', authorization: `Bearer ${callsKey().toString('hex')}`, ...(init.headers ?? {}) },
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(String(body?.detail ?? body?.error ?? `the call service answered ${res.status}`));
+  if (!res.ok) throw new Error(readableCallError(String(body?.detail ?? body?.error ?? `the call service answered ${res.status}`)));
   return body;
+}
+
+/**
+ * Turn the call service's error into one plain sentence (it used to pass on Telnyx's raw JSON, which the chat
+ * showed as a red block). Short enough for the chat notice (200 chars). Known Telnyx refusals get the fix in words.
+ */
+export function readableCallError(raw: string): string {
+  const text = String(raw ?? '').trim();
+  const m = /^Telnyx answered (\d{3}):\s*([\s\S]*)$/.exec(text);
+  if (!m) return text.slice(0, 200) || 'unknown error';
+  const status = m[1];
+  const rest = m[2];
+  // The body may be cut off mid-JSON, so read the fields with patterns rather than JSON.parse alone.
+  let code = '', detail = '', title = '';
+  try {
+    const j = JSON.parse(rest);
+    const e = Array.isArray(j?.errors) ? j.errors[0] : null;
+    code = String(e?.code ?? ''); detail = String(e?.detail ?? ''); title = String(e?.title ?? '');
+  } catch {
+    code = /"code"\s*:\s*"?(\w+)/.exec(rest)?.[1] ?? '';
+    detail = /"detail"\s*:\s*"([^"]*)/.exec(rest)?.[1] ?? '';
+    title = /"title"\s*:\s*"([^"]*)/.exec(rest)?.[1] ?? '';
+  }
+  if (title === 'null') title = '';
+  if (/non-verified numbers/i.test(detail) || (code === '10010' && /verif/i.test(detail))) {
+    return 'the phone account (Telnyx) is still on its trial level, which only calls the one verified number. Upgrade it to Paid in the Telnyx portal (Account, Levels).';
+  }
+  if (/insufficient funds|out of funds|balance/i.test(detail) || code === '20100') return 'the phone account (Telnyx) is out of funds. Add funds in the Telnyx portal.';
+  if (status === '429' || code === '10011' || code === '90103') return 'the phone line is busy with too many calls right now. Try again in a minute.';
+  if (/channels limit/i.test(detail) || ['90041', '90042', '90043'].includes(code)) return 'another call is still on the line. Try again when it ends.';
+  if (status === '401') return 'the phone account key was refused (Telnyx 401). The key on the server needs replacing.';
+  const why = (detail || title).replace(/\s+/g, ' ').trim();
+  return `the phone company (Telnyx) refused the call${why ? `: ${why}` : ''}${code ? ` (code ${code})` : ` (${status})`}`.slice(0, 200);
 }
 
 /** Dial, then wait until the call is over (or its time limit plus a minute) and return the record. */
@@ -90,7 +123,7 @@ export async function runCall(botRef: string, number: string, opening: string, b
 export function callResultText(rec: CallRecord, business: string): string {
   const secs = rec.answered && rec.ended ? Math.max(0, Math.round(rec.ended - rec.answered)) : 0;
   const lines = (rec.transcript ?? []).map((t) => `${t.who === 'bot' ? 'You' : 'Them'}: ${t.text}`);
-  if (rec.status === 'failed') return `The call to ${business} did not go through: ${rec.error ?? 'unknown error'}.`;
+  if (rec.status === 'failed') return `The call to ${business} did not go through: ${readableCallError(rec.error ?? 'unknown error')}.`;
   if (!rec.answered) return `Nobody answered at ${business} (or the call could not connect). Nothing was said.`;
   return [
     `Call to ${business} ended after ${Math.floor(secs / 60)} min ${secs % 60} s.`,

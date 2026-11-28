@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type SetStateAction } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
 import { COMPOSE_EVENT, LISTEN_EVENT, takeListen, type ComposeDetail } from '../lib/compose';
 import { useConfigUI } from '../configStore';
 import type { Bot } from '@shared/types';
@@ -18,13 +18,26 @@ import { keyHint } from '../lib/keys';
 import type { MessageBody } from '@shared/types';
 import { BotAvatarFor } from '../avatar/BotAvatar';
 
-/** A group's members, for the @ picker and the mention highlight. Fetched again each time the picker opens. */
+/**
+ * Who @ can name, for the picker and the mention highlight. In a group: its members, fetched again each time
+ * the picker opens. In a bot's own chat (or side chat): the other bots on the team, and the server passes the
+ * message on to each one named (server/src/direct-mentions.ts). An outside bot's chat has no picker.
+ */
 function useRoomMembers(bot: Bot): [RoomMember[], () => void] {
   const [members, setMembers] = useState<RoomMember[]>([]);
+  const team = useStore((s) => s.bots);
   const load = () => { if (bot.kind === 'room') api.roomMembers(bot.id).then((r) => setMembers(r.members)).catch(() => {}); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(load, [bot.id, bot.kind]);
-  return [members, load];
+  const others = useMemo(() => (bot.kind === 'room' || bot.outside ? [] : teamMentions(bot, team)), [bot, team]);
+  return [bot.kind === 'room' ? members : others, load];
+}
+
+/** The other bots on the team that a bot's own chat can @mention: never itself or a group. */
+function teamMentions(bot: Bot, team: Bot[]): RoomMember[] {
+  return team
+    .filter((b) => b.kind !== 'room' && b.id !== bot.id && b.name.toLowerCase() !== bot.name.toLowerCase())
+    .map((b) => ({ id: b.id, name: b.name, label: b.label ?? '', avatarShape: b.avatarShape, avatarColor: b.avatarColor }));
 }
 
 /** The message box's text drawn behind the (transparent-backed) textarea, with each @mention tinted. */
@@ -162,13 +175,13 @@ export function Composer({ bot, running }: { bot: Bot; running: boolean }) {
     if (restore && keptDraft.current !== null) setText(keptDraft.current);
     keptDraft.current = null;
   };
-  // @ picker (groups only): the @name being typed at the cursor, the matching members, and which one is lit.
+  // @ picker (groups, and a bot's own chat for the other bots): the @name at the cursor, the matches, and which one is lit.
   const [members, reloadMembers] = useRoomMembers(bot);
   const [cursor, setCursor] = useState(0);
   const [lit, setLit] = useState(0);
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
-  const typed = bot.kind === 'room' ? mentionQuery(text, cursor) : null;
+  const typed = members.length || bot.kind === 'room' ? mentionQuery(text, cursor) : null;
   const matches = typed && typed.start !== dismissedAt ? mentionMatches(members, typed.query) : [];
   const picking = matches.length > 0;
   const pickerKey = typed ? `${typed.start}` : '';
@@ -191,14 +204,44 @@ export function Composer({ bot, running }: { bot: Bot; running: boolean }) {
 
   useEffect(() => { ref.current?.focus(); }, [bot.id]);
 
-  // Auto-grow.
-  useLayoutEffect(() => {
+  const placeholder = bot.outside ? `Message ${displayName(bot)} via your Slack` : running && (bot.busySend ?? 'steer') === 'steer' ? `Add to what ${bot.kind === 'room' ? 'they’re' : `${bot.name} is`} working on…` : bot.kind === 'room' ? `Message ${displayName(bot)} · type @ to ask one Bot` : `Message ${displayName(bot)}`;
+  // Auto-grow: the box is as tall as its words (or, when empty, its placeholder), up to MAX_H.
+  // It is measured again whenever anything that changes that height changes, not only the words: the
+  // placeholder (it changes while the Bot works), and the box's width (window resized or snapped, side
+  // panel dragged, zoom). Before, only the words did, so after a long message was sent a box measured at
+  // another width or with another placeholder stayed tall and blank until the chat was opened again.
+  const fit = () => {
     const el = ref.current;
     if (!el) return;
+    // Measure with no scroll bar: on Windows a scroll bar takes width, so the words wrap onto more lines
+    // while measuring than they fill once the box is its new height.
+    el.style.overflowY = 'hidden';
     el.style.height = '0px';
-    el.style.height = `${Math.min(el.scrollHeight, MAX_H)}px`;
-    el.style.overflowY = el.scrollHeight > MAX_H ? 'auto' : 'hidden';
-  }, [text]);
+    const want = el.scrollHeight;
+    el.style.height = `${Math.min(want, MAX_H)}px`;
+    el.style.overflowY = want > MAX_H ? 'auto' : 'hidden';
+  };
+  const fitRef = useRef(fit);
+  fitRef.current = fit;
+  useLayoutEffect(fit, [text, placeholder]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let width = el.getBoundingClientRect().width;
+    let frame = 0;
+    // Only a change of width: the observer also sees the height this sets, which must not loop.
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
+      const w = el.getBoundingClientRect().width;
+      if (Math.abs(w - width) < 0.5) return;
+      width = w;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => fitRef.current());
+    });
+    ro?.observe(el);
+    // A web font that loads after the first measure changes how the words wrap.
+    void document.fonts?.ready.then(() => fitRef.current());
+    return () => { ro?.disconnect(); cancelAnimationFrame(frame); };
+  }, []);
 
   // ⌘I focuses the prompt.
   useEffect(() => {
@@ -328,7 +371,7 @@ export function Composer({ bot, running }: { bot: Bot; running: boolean }) {
         </div>
       )}
       {picking && (
-        <div className="mention-picker" role="listbox" id={`mentions-${bot.id}`} aria-label="Group members">
+        <div className="mention-picker" role="listbox" id={`mentions-${bot.id}`} aria-label={bot.kind === 'room' ? 'Group members' : 'Other bots'}>
           {matches.map((m, i) => {
             const member = useStore.getState().bots.find((b) => b.id === m.id);
             return (
@@ -389,7 +432,7 @@ export function Composer({ bot, running }: { bot: Bot; running: boolean }) {
               className="composer__input"
               rows={1}
               value={text}
-              placeholder={outside ? `Message ${displayName(bot)} via your Slack` : running && (bot.busySend ?? 'steer') === 'steer' ? `Add to what ${bot.kind === 'room' ? 'they’re' : `${bot.name} is`} working on…` : bot.kind === 'room' ? `Message ${displayName(bot)} · type @ to ask one Bot` : `Message ${displayName(bot)}`}
+              placeholder={placeholder}
               readOnly={dictating}
               onChange={(e) => { if (!dictating) { setText(e.target.value); trackCursor(e.target); } }}
               onSelect={(e) => trackCursor(e.currentTarget)}

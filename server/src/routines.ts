@@ -9,6 +9,77 @@ let enqueueFn: ((botId: string, t: any) => void) | null = null;
 
 // When the routine was last switched on, made or changed (scheduleRoutine): a run is only "missed" after that.
 try { db.exec('ALTER TABLE routines ADD COLUMN armed_at INTEGER'); } catch { /* already there */ }
+// Failing runs in a row, the last error, and when the routine switched itself off after too many (the fatigue rule).
+for (const ddl of ['fail_count INTEGER NOT NULL DEFAULT 0', 'last_error TEXT', 'auto_off_at INTEGER']) {
+  try { db.exec(`ALTER TABLE routines ADD COLUMN ${ddl}`); } catch { /* already there */ }
+}
+
+/**
+ * Routine safety rules (borrowed from OpenBot's docs/routines.md, "The fatigue rule"):
+ * - a routine runs at most every 15 minutes (checked when it is made or changed, and held by the scheduler);
+ * - at most 20 recurring routines are switched on per person (one-time reminders do not count);
+ * - a failing routine says so once, stays quiet while it keeps failing, and switches itself off after
+ *   10 failures in a row (Turn back on in Bot settings > Routines starts the count again);
+ * - windows missed while a run is still going, or while the server was down, are skipped: no backlog is
+ *   replayed (a restart catches up at most the one newest run, see missedRun).
+ */
+export const ROUTINE_MIN_GAP_MS = 15 * 60_000;
+export const ROUTINE_MAX_ENABLED = 20;
+export const ROUTINE_FAIL_LIMIT = 10;
+
+/** Why this schedule is not allowed (it comes round more often than every 15 minutes), or null. */
+export function scheduleGapProblem(schedule: string, timezone?: string | null): string | null {
+  if (isEventSchedule(schedule)) return null;
+  try {
+    const probe = new Cron(schedule, { timezone: timezone || 'UTC', paused: true });
+    const runs = probe.nextRuns(200).map((d) => d.getTime());
+    probe.stop();
+    for (let i = 1; i < runs.length; i++) {
+      if (runs[i] - runs[i - 1] < ROUTINE_MIN_GAP_MS) return 'Routines can run at most every 15 minutes. Pick a schedule with at least 15 minutes between runs.';
+    }
+    return null;
+  } catch (e) { return `Invalid schedule: ${(e as Error).message}`; }
+}
+
+/** Why one more recurring routine cannot be switched on for this person (20 already are), or null. */
+export function enabledCapProblem(userId: string, exceptId?: string): string | null {
+  const n = (db.prepare("SELECT COUNT(*) n FROM routines r JOIN bots b ON b.id=r.bot_id WHERE b.user_id=? AND r.enabled=1 AND COALESCE(r.run_once,0)=0 AND r.id<>?").get(userId, exceptId ?? '') as any).n as number;
+  return n >= ROUTINE_MAX_ENABLED ? `You already have ${ROUTINE_MAX_ENABLED} routines switched on, the most allowed. Pause or delete one first.` : null;
+}
+
+/** Both rules for a recurring routine that is about to be switched on (made, changed or resumed). */
+export function routineRuleProblem(a: { userId: string; schedule: string; timezone?: string | null; runOnce?: boolean; exceptId?: string }): string | null {
+  if (a.runOnce) return null;
+  return scheduleGapProblem(a.schedule, a.timezone) ?? enabledCapProblem(a.userId, a.exceptId);
+}
+
+/** Routines with a run queued or going now, and since when: a window that comes up meanwhile is skipped. */
+const inFlight = new Map<string, number>();
+const IN_FLIGHT_FOR = 2 * 3600_000;
+
+export type RoutineFailure = { post: boolean; count: number; turnedOff: boolean };
+
+/**
+ * A routine run ended. ok: it finished; false: it failed (an error, not a stop or an update);
+ * null: stopped or interrupted, which says nothing about the routine. On a failure: post says whether this
+ * is the first in a row (the only one the chat hears about), turnedOff whether it was the tenth.
+ */
+export function routineRunEnded(id: string, ok: boolean | null, error?: string | null): RoutineFailure | null {
+  inFlight.delete(id);
+  if (ok === null) return null;
+  if (ok) { db.prepare('UPDATE routines SET fail_count=0, last_error=NULL WHERE id=?').run(id); return null; }
+  const r = db.prepare('SELECT fail_count, enabled, run_once FROM routines WHERE id=?').get(id) as any;
+  if (!r) return null;
+  const count = (r.fail_count ?? 0) + 1;
+  const turnedOff = count >= ROUTINE_FAIL_LIMIT && !!r.enabled && !r.run_once;
+  db.prepare('UPDATE routines SET fail_count=?, last_error=? WHERE id=?').run(count, String(error ?? '').slice(0, 300) || null, id);
+  if (turnedOff) {
+    db.prepare('UPDATE routines SET enabled=0, auto_off_at=? WHERE id=?').run(now(), id);
+    jobs.get(id)?.stop();
+    jobs.delete(id);
+  }
+  return { post: count === 1, count, turnedOff };
+}
 // A one-time reminder (create_routine once: true) switches itself off after it runs.
 try { db.exec('ALTER TABLE routines ADD COLUMN run_once INTEGER NOT NULL DEFAULT 0'); } catch { /* already there */ }
 
@@ -56,7 +127,8 @@ export function initRoutines(enqueue: (botId: string, t: any) => void) {
 
 /** Switch a routine on (made, changed or enabled): from now on its schedule counts. */
 export function scheduleRoutine(r: Pick<Routine, 'id' | 'botId' | 'name' | 'prompt' | 'schedule' | 'timezone'>) {
-  try { db.prepare('UPDATE routines SET armed_at=? WHERE id=?').run(now(), r.id); } catch { /* a routine not stored yet */ }
+  // Switched on again (or made or changed): the failure count starts over.
+  try { db.prepare('UPDATE routines SET armed_at=?, fail_count=0, last_error=NULL, auto_off_at=NULL WHERE id=?').run(now(), r.id); } catch { /* a routine not stored yet */ }
   arm(r);
 }
 
@@ -64,7 +136,12 @@ function arm(r: Pick<Routine, 'id' | 'botId' | 'name' | 'prompt' | 'schedule' | 
   if (isEventSchedule(r.schedule)) { void setEventRoutineEnabled(r.id, true); return; }
   unscheduleRoutine(r.id);
   try {
-    const job = new Cron(r.schedule, { timezone: r.timezone || 'UTC', protect: true }, () => runRoutine(r.id));
+    // interval: the scheduler itself never starts it twice within 15 minutes (a schedule from before the rule).
+    const job = new Cron(r.schedule, { timezone: r.timezone || 'UTC', protect: true, interval: ROUTINE_MIN_GAP_MS / 1000 }, () => {
+      const since = inFlight.get(r.id);
+      if (since && now() - since < IN_FLIGHT_FOR) { console.log(`[routines] skipped ${r.id} (${r.name}): the last run has not finished`); return; }
+      runRoutine(r.id);
+    });
     jobs.set(r.id, job);
   } catch (e) {
     console.warn('[routines] bad schedule', r.id, r.schedule, (e as Error).message);
@@ -88,6 +165,7 @@ export function setRoutinePromptAtRun(fn: (row: any) => string | null) { promptA
 export function runRoutine(id: string, why?: string) {
   const r = db.prepare('SELECT * FROM routines WHERE id=?').get(id) as any;
   if (!r || !enqueueFn) return;
+  inFlight.set(id, now());
   db.prepare('UPDATE routines SET last_run_at=? WHERE id=?').run(now(), id);
   // A one-time reminder runs once: it is switched off here and stays listed as done.
   if (r.run_once) { db.prepare('UPDATE routines SET enabled=0 WHERE id=?').run(id); jobs.get(id)?.stop(); jobs.delete(id); }

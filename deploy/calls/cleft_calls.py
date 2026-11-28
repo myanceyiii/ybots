@@ -125,7 +125,13 @@ async def telnyx(method: str, path: str, body: dict | None = None) -> dict:
         r = await client.request(method, f"{TELNYX_API}{path}", json=body,
                                  headers={"Authorization": f"Bearer {TELNYX_KEY}"})
     if r.status_code >= 300:
-        raise HTTPException(502, f"Telnyx answered {r.status_code}: {r.text[:300]}")
+        # Keep Telnyx's own reason whole (it used to be cut at 300 chars mid-JSON); the server turns it into words.
+        try:
+            err = (r.json().get("errors") or [{}])[0]
+            reason = json.dumps({"errors": [{k: err.get(k) for k in ("code", "title", "detail")}]})
+        except Exception:
+            reason = r.text[:600]
+        raise HTTPException(502, f"Telnyx answered {r.status_code}: {reason}")
     return r.json()
 
 
@@ -174,7 +180,7 @@ async def place_call(request: Request):
         # The dial never started: the call is over, so it can't block the next one.
         tokens.pop(token, None)
         call["status"] = "failed"
-        call["error"] = str(e.detail)[:300]
+        call["error"] = str(e.detail)[:800]
         call["ended"] = now()
         save(call)
         raise

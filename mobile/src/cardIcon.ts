@@ -1,4 +1,4 @@
-// Verbatim copy of server/src/card-icon.ts (tests/card-icon.mjs checks it). Change the server file, then copy.
+// Approval card icons: which logo or glyph a card shows. Shared by the web app (@shared/card-icon) and Android (mobile/src/cardIcon.ts).
 /**
  * Alex, 2026-11-26: a card asking for permission showed a white square with a letter ("A" for Actual
  * Budget). Every card now shows what it is about: the real app logo for a known app (Simple Icons, CC0),
@@ -27,6 +27,7 @@ export interface CardIconInput {
   risk?: string;
   mail?: unknown;
   secret?: unknown;
+  vault?: unknown;
   purchase?: unknown;
   screenHelp?: unknown;
   postingPlan?: unknown;
@@ -114,7 +115,7 @@ const WORD_GLYPHS: [RegExp, string][] = [
 
 /** The icon id for a card: an app's logo, else a glyph for what the action does. Always one of CARD_ICONS. */
 export function cardIconId(card: CardIconInput): string {
-  if (card.secret) return 'secret';
+  if (card.secret || card.vault) return 'secret';
   if (card.purchase) return 'purchase';
   if (card.screenHelp) return 'hand';
   if (card.postingPlan) return 'posting';

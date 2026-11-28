@@ -1,5 +1,7 @@
+import { answer } from './lib/contract.js';
 import { redact } from './lib/redact.js';
 import { dropSecret, handSecret } from './browser-cards.js';
+import { askToSave, mayAnswerCard, personOfRequest } from './vault.js';
 import { handPlanDays, setPublishGuard } from './posting.js';
 import { CHAT_COLOR_ORDER, isChatColor } from './chat-colors.js';
 import { VISUALS_LEVELS } from './visuals-level.js';
@@ -17,16 +19,21 @@ import { webBuild } from './build-info.js';
 import { accessConfigured, accessEmail } from './lib/cf-access.js';
 import { eventInScope, inScope, scopeFor } from './lib/scope.js';
 import { checkEdit, editNote, markEdited } from './message-edit.js';
-import { agentName, agentNote, createSession, createSessionToken, currentSession, displayName, destroyBearerSession, destroySession, isLocalRequest, isOwnerKey, peerAddress, rateLimit, requireUser, bearerToken, type AuthVars } from './lib/auth.js';
+import { agentName, agentNote, createSession, createSessionToken, currentSession, displayName, destroyBearerSession, destroySession, isLocalRequest, isOwnerKey, peerAddress, rateLimit, requireUser, bearerToken, userFromToken, type AuthVars } from './lib/auth.js';
 import { createMachine, machineRoutes, parsePublicKey } from './machines.js';
 import { getSummaryPrefs, lastSummaryError, setSummaryPrefs } from './list-summary-store.js';
 import { summaryOptions, sweepSoon } from './list-summary.js';
-import { allLive, appendRow, chatOwner, clearConversation, restoreConversation, emitBot, getBot, getBotRow, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, updateRow } from './store.js';
+import { allLive, appendRow, chatOwner, clearConversation, restoreConversation, emitBot, getBot, getBotRow, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, toTask, updateRow } from './store.js';
 import { applyViewOp, viewToPageBlocks, ViewError } from './views.js';
+import { acceptCheckinOffer } from './checkin-offer.js';
 import { withPin } from './board-pin.js';
 import { createPage } from './pages.js';
 import { notePageOrigin } from './page-shelf.js';
-import { ApprovalError, busySendFor, enqueue, interrupt, resolveApproval, sendFromOwner, steerRoomMember } from './agent/loop.js';
+import { listConversationAllows, turnOffConversation } from './conversation-allows.js';
+import { refreshKindState } from './browser-guard.js';
+import { ApprovalError, approvalReadback, busySendFor, enqueue, enqueueBotMessage, interrupt, resolveApproval, sendFromOwner, steerRoomMember } from './agent/loop.js';
+import { chatBotNote, directMentions, forwardText } from './direct-mentions.js';
+import { createHop, hopsAllowed } from './bot-handoffs.js';
 import { attachmentNote, checkAttachments, imagePaths } from './chat-extras.js';
 import { deleteRule, listRules, ruleLog } from './allow-rules.js';
 import { freeTerminal, isMaintainer, maintainerAudit, setFreeTerminal } from './maintainer-guard.js';
@@ -36,7 +43,7 @@ import { assignEngine, provisionEngine, removeEngine, restartEngine, syncPersona
 import { deleteMemory, listMemories, memoryBot } from './engine-memory.js';
 import { orgo } from './orgo.js';
 import { appsStatus } from './local-apps.js';
-import { runRoutine, scheduleRoutine, unscheduleRoutine } from './routines.js';
+import { routineRuleProblem, runRoutine, scheduleRoutine, unscheduleRoutine } from './routines.js';
 import { deleteEventTrigger } from './triggers.js';
 import { dispatchRoomMessage } from './agent/rooms.js';
 import { personReact } from './reaction-feedback.js';
@@ -120,7 +127,7 @@ function findOrCreateUser(email: string, name?: string, opts: { owner?: boolean 
  * Signs the request in as the person Cloudflare Access let through, when Access sign-in is set up and
  * that address is on ALLOWED_EMAILS (see lib/cf-access.ts). Answers with the user, or with why not.
  */
-async function accessSignIn(c: Context): Promise<{ user?: { id: string; email: string; name: string; avatarUrl: string | null; displayName: string }; refused?: string }> {
+async function accessSignIn(c: Context): Promise<{ user?: { id: string; email: string; name: string; avatarUrl: string | null; displayName: string }; person?: string; refused?: string }> {
   if (!accessConfigured()) return {};
   const passed = await accessEmail(c.req.header('cf-access-jwt-assertion'));
   if (!passed) return {};
@@ -131,7 +138,7 @@ async function accessSignIn(c: Context): Promise<{ user?: { id: string; email: s
     const { id } = findOrCreateUser(email);
     createSession(c, id, { person: passed });
     const user = db.prepare('SELECT id, email, name, avatar_url AS avatarUrl FROM users WHERE id=?').get(id) as any;
-    return { user: { ...user, displayName: displayName(user, passed) } };
+    return { user: { ...user, displayName: displayName(user, passed) }, person: passed };
   } catch (e) {
     console.warn(`[auth] Access sign-in for ${redact(email)} failed: ${redact((e as Error).message)}`);
     return { refused: email };
@@ -148,6 +155,7 @@ api.get('/auth/me', async (c) => {
   // let through. Nothing to run or click. After "Log out" it waits for "Continue" instead (POST /auth/access).
   let accessRefused: string | undefined;
   let accessReady = false;
+  let accessPerson: string | undefined;
   if (!user && bearer === undefined && accessConfigured()) {
     if (getCookie(c, SIGNED_OUT)) {
       const passed = await accessEmail(c.req.header('cf-access-jwt-assertion'));
@@ -156,11 +164,13 @@ api.get('/auth/me', async (c) => {
     } else {
       const r = await accessSignIn(c);
       user = r.user ?? null;
+      accessPerson = r.person;
       accessRefused = r.refused;
     }
   }
   // Which bots this sign-in may see, when it is scoped (lib/scope.ts); apps hide the rest of the menus.
-  const scope = s ? scopeFor(s.user.id, s.person) : null;
+  // A sign-in made just now through Access is scoped the same as one made earlier.
+  const scope = s ? scopeFor(s.user.id, s.person) : user && accessPerson ? scopeFor(user.id, accessPerson) : null;
   if (user && scope) user = Object.assign(user, { scope: { bots: [...scope.bots] } });
   return c.json({ user, devLogin: env.devLogin, signIn: { accessUrl: env.cfAccessAppUrl || undefined, accessRefused, accessReady } });
 });
@@ -269,11 +279,17 @@ api.post('/auth/owner', async (c) => {
   }
 });
 
+/** Link-preview fetchers in chat and mail apps (they open a pasted link to draw a card for it). */
+const LINK_PREVIEWERS = /Slackbot|facebookexternalhit|Facebot|Twitterbot|Discordbot|TelegramBot|WhatsApp|LinkedInBot|SkypeUriPreview|Iframely|Embedly|redditbot|Google-PageRenderer|Applebot|bingbot|Googlebot|vkShare|Pinterest|Mastodon|Signal-Desktop|MicrosoftPreview|Teams/i;
+
 api.get('/auth/link/:token', (c) => {
   // Checked before the link is looked at, so a refused request does not use a link up.
   const peer = peerAddress(c);
   if (linkFailures.full(peer)) return tooMany(c, linkFailures, peer);
   const token = c.req.param('token');
+  // A browser prefetch or a chat app's link preview must not use the link up before the person opens it.
+  const purpose = `${c.req.header('purpose') ?? ''} ${c.req.header('sec-purpose') ?? ''} ${c.req.header('x-moz') ?? ''}`;
+  if (/prefetch|prerender/i.test(purpose) || LINK_PREVIEWERS.test(c.req.header('user-agent') ?? '')) return c.text('Open this link to sign in.', 200);
   const l = signInLinks.get(token);
   signInLinks.delete(token);
   if (!l || l.expires < Date.now()) {
@@ -284,7 +300,8 @@ api.get('/auth/link/:token', (c) => {
   // same kind of session that device has. The phone app asks for JSON (it scanned the link as a QR code)
   // and keeps the token itself; a browser gets a cookie and is sent to the app.
   if ((c.req.header('accept') ?? '').includes('application/json')) {
-    const user = db.prepare('SELECT id, email, name FROM users WHERE id=?').get(l.userId) as { id: string; email: string; name: string };
+    const user = db.prepare('SELECT id, email, name FROM users WHERE id=?').get(l.userId) as { id: string; email: string; name: string } | undefined;
+    if (!user) return c.text('This sign-in link is for an account that no longer exists.', 410);
     return c.json({ token: createSessionToken(l.userId, { owner: l.owner, person: l.person, agent: l.agent, device: deviceLabel(c.req.header('user-agent'), c.req.header('x-cleft-device')) }), user: { ...user, displayName: displayName(user, l.person) } });
   }
   createSession(c, l.userId, { owner: l.owner, person: l.person, agent: l.agent });
@@ -433,12 +450,28 @@ api.use('/*', async (c, next) => {
 // the last one it saw (the Last-Event-ID header a browser adds by itself, or ?after=) and is sent what it
 // missed. `hello` says whether that worked (`resumed`); when it did not, the app fetches afresh as before.
 // `hello` also names the build, so an open page can tell the server was updated under it.
+/** Events a slow client may have waiting before its stream is closed (it reconnects and catches up). */
+const SSE_QUEUE_MAX = 5000;
+/** Wait for new events or the heartbeat, whichever is first, without leaving a timer behind. */
+async function idle(set: (w: (() => void) | null) => void, ms: number) {
+  let t: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([new Promise<void>((r) => set(r)), new Promise<void>((r) => { t = setTimeout(r, ms); })]);
+  clearTimeout(t);
+  set(null);
+}
+/** Whether the session a stream was opened with still exists: a signed-out device's stream ends at the next heartbeat. */
+function liveCheck(c: Context): () => boolean {
+  const token = currentSession(c)?.token;
+  return () => !token || !!userFromToken(token);
+}
+
 api.get('/events', (c) => {
   const user = c.get('user');
   const scope = c.get('scope');
   const asked = (c.req.header('last-event-id') ?? c.req.query('after') ?? '').trim();
   const [run, n] = asked.split('.');
   const after = asked && run === hubBoot && /^\d+$/.test(n ?? '') ? Number(n) : null;
+  const sessionLive = liveCheck(c);
   return streamSSE(c, async (stream) => {
     const queue: { id: number; data: string }[] = [];
     let wake: (() => void) | null = null;
@@ -467,15 +500,19 @@ api.get('/events', (c) => {
       const data = shaped(m.ev);
       if (data !== null) await stream.writeSSE({ data, id: `${hubBoot}.${m.id}` });
     }
-    while (!stream.aborted) {
-      if (!queue.length) {
-        await Promise.race([new Promise<void>((r) => (wake = r)), new Promise((r) => setTimeout(r, 20_000))]);
-        wake = null;
-        if (!queue.length) { await stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }); continue; }
+    try {
+      while (!stream.aborted) {
+        if (!queue.length) {
+          await idle((w) => (wake = w), 20_000);
+          if (stream.aborted || !sessionLive()) break;
+          if (!queue.length) { await stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }); continue; }
+        }
+        // A client that cannot keep up is closed rather than buffered without end: it reconnects with its
+        // last id and gets what it missed (hub.since), or reloads.
+        if (queue.length > SSE_QUEUE_MAX) break;
+        while (queue.length && !stream.aborted) { const q = queue.shift()!; await stream.writeSSE({ data: q.data, id: `${hubBoot}.${q.id}` }); }
       }
-      while (queue.length) { const q = queue.shift()!; await stream.writeSSE({ data: q.data, id: `${hubBoot}.${q.id}` }); }
-    }
-    unsub();
+    } finally { unsub(); }
   });
 });
 
@@ -491,6 +528,7 @@ api.get('/notify/stream', (c) => {
   const scope = c.get('scope');
   // An app that can set timers and alarms says so (phone.ts); only it is sent phone actions.
   const caps = String(c.req.query('caps') ?? '').split(',');
+  const sessionLive = liveCheck(c);
   return streamSSE(c, async (stream) => {
     const queue: string[] = [];
     let wake: (() => void) | null = null;
@@ -512,16 +550,17 @@ api.get('/notify/stream', (c) => {
         if (n) await stream.writeSSE({ data: JSON.stringify({ type: 'notify', n: { ...n, silent: true, catchUp: true } }) });
       }
     }
-    while (!stream.aborted) {
-      if (!queue.length) {
-        await Promise.race([new Promise<void>((r) => (wake = r)), new Promise((r) => setTimeout(r, 25_000))]);
-        wake = null;
-        if (!queue.length) { await stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }); continue; }
+    try {
+      while (!stream.aborted) {
+        if (!queue.length) {
+          await idle((w) => (wake = w), 25_000);
+          if (stream.aborted || !sessionLive()) break;
+          if (!queue.length) { await stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }); continue; }
+        }
+        if (queue.length > SSE_QUEUE_MAX) break;
+        while (queue.length && !stream.aborted) await stream.writeSSE({ data: queue.shift()! });
       }
-      while (queue.length) await stream.writeSSE({ data: queue.shift()! });
-    }
-    unsub();
-    unlink();
+    } finally { unsub(); unlink(); }
   });
 });
 
@@ -580,7 +619,7 @@ api.get('/bots', (c) => {
   // A bot the owner hid stays in the list with `ownerHidden` (apps leave it out of the home list but still show its
   // face in groups and offer "Show" in settings). A scoped sign-in never sees that mark.
   const bots = listBots(c.get('user').id).filter((b) => inScope(scope, b.id)).map((b) => (scope && b.ownerHidden ? { ...b, ownerHidden: false } : b));
-  return c.json({ bots, live: allLive(c.get('user').id).filter((l) => inScope(scope, l.botId)) });
+  return answer(c, 'GET /api/bots', { bots, live: allLive(c.get('user').id).filter((l) => inScope(scope, l.botId)) });
 });
 
 api.post('/bots', async (c) => {
@@ -773,7 +812,7 @@ api.get('/bots/:id/rows', (c) => {
   const beforeSeq = c.req.query('beforeSeq') ? Number(c.req.query('beforeSeq')) : undefined;
   const limit = Number(c.req.query('limit') ?? 200);
   if ((beforeSeq !== undefined && (!Number.isInteger(beforeSeq) || beforeSeq < 1)) || !Number.isInteger(limit) || limit < 1) return c.json({ error: 'beforeSeq and limit must be whole numbers of at least 1.' }, 400);
-  return c.json({ generation: b.generation, rows: listRows(b.id, { beforeSeq, limit }) });
+  return answer(c, 'GET /api/bots/{id}/rows', { generation: b.generation, rows: listRows(b.id, { beforeSeq, limit }) });
 });
 
 /**
@@ -806,7 +845,7 @@ api.post('/bots/:id/messages', async (c) => {
   // message that already arrived is answered, so a retry can never post it twice.
   const clientId = typeof sent.clientId === 'string' && sent.clientId.length <= 80 ? `${b.id}:${sent.clientId}` : null;
   const dup = clientId ? recentSends.get(clientId) : undefined;
-  if (dup && dup.generation === b.generation) { const row = getRow(b.id, dup.seq); if (row) return c.json({ row, duplicate: true }); }
+  if (dup && dup.generation === b.generation) { const row = getRow(b.id, dup.seq); if (row) return answer(c, 'POST /api/bots/{id}/messages', { row, duplicate: true }); }
   if (text.length > 200_000) return c.json({ error: 'That message is too long to send. Attach it as a file instead.' }, 413);
   // A script's message (a Claude thread, a test) is shown as its own, never as the person's, and the bot
   // is told who sent it. It is still the person's account, so the bot may act on it, but it is not an approval.
@@ -828,6 +867,8 @@ api.post('/bots/:id/messages', async (c) => {
   // the bot is told after that; the chat's messages still reach it in the order they were sent.
   // Who the bot is told a steering note is from (steer-mode.ts): the person signed in, Alex or Sam.
   const owner = displayName(c.get('user'), currentSession(c)?.person ?? null);
+  const userId = c.get('user').id;
+  const scope = c.get('scope');
   inOrder(b.id, attached.files.length > 0, async () => {
     // Group chats dispatch to their member Bots instead of running their own loop. Each member that
     // answers gets its own copy of the files, read for it the same way.
@@ -849,11 +890,28 @@ api.post('/bots/:id/messages', async (c) => {
     // A file the bot is not given in full is said in the chat, so it is never lost quietly.
     if (problems.length) appendRow(b.id, 'notice', { type: 'notice', text: `${b.name} could not read ${problems.join(', ')}.`, tone: 'warn' });
     const images = imagePaths(b.id, attached.files);
+    // @Name of another team bot in this chat (direct-mentions.ts): the message goes to that bot too, and its
+    // answer comes back here through send_to_bot. Not from a walled-off or outside bot's chat, and not for a script.
+    const named = agent || isSilo(b.side_of ?? b.id) || isOutside(b.side_of ?? b.id) ? [] : directMentions(text, b, listBots(userId).filter((x) => inScope(scope, x.id)));
+    const asker = b.side_of ?? b.id;
+    const landing = named.filter((m) => hopsAllowed(asker, m.id));
+    const mentionNote = named.length ? chatBotNote(named.map((m) => m.name), landing.map((m) => m.name)) : '';
+    if (agent && directMentions(text, b, listBots(userId).filter((x) => inScope(scope, x.id))).length) {
+      appendRow(b.id, 'notice', { type: 'notice', text: 'A script cannot pass a message on to another Bot with @. Only a person can.', tone: 'info' });
+    }
     // Any pending question card is answered by a free-text message. While the bot works, the message
     // steers that reply, waits its turn, or stops it, by the bot's setting (steer-mode.ts).
-    sendFromOwner(b.id, { type: 'user', text: [said, note].filter((x) => x.trim()).join('\n\n'), agent, ...(images.length ? { images } : {}) }, row.seq, owner);
+    sendFromOwner(b.id, { type: 'user', text: [said, note, mentionNote].filter((x) => x.trim()).join('\n\n'), agent, ...(images.length ? { images } : {}) }, row.seq, owner);
+    // A team bot answers as a handoff: its reply lands here word for word under its name (bot-handoffs.ts).
+    // An outside member or a walled-off bot keeps the old path (it answers this chat's bot).
+    for (const m of named) {
+      if (landing.includes(m)) {
+        const r = createHop({ fromBotId: asker, toBotId: m.id, askChat: b.id, depth: 1, task: text.trim(), kind: 'mention' });
+        if (!r.ok) appendRow(b.id, 'notice', { type: 'notice', text: `Not passed on to ${m.name}: ${r.why}`, tone: 'warn' });
+      } else enqueueBotMessage(asker, m.id, forwardText(owner || 'Your owner', getBotRow(asker)?.name ?? b.name, text.trim()), 1);
+    }
   });
-  return c.json({ row: getRow(b.id, row.seq) ?? row });
+  return answer(c, 'POST /api/bots/{id}/messages', { row: getRow(b.id, row.seq) ?? row });
 });
 
 // React to a Bot's message with an emoji, or take the reaction back (a toggle): { emoji }.
@@ -867,7 +925,7 @@ api.post('/bots/:id/rows/:seq/reactions', async (c) => {
   const { emoji } = await c.req.json<{ emoji: string }>().catch(() => ({ emoji: '' }));
   const r = personReact(b.id, Number(c.req.param('seq')), emoji, displayName(c.get('user'), currentSession(c)?.person ?? null));
   if (!r.ok) return c.json({ error: r.error }, r.status);
-  return c.json({ ok: true, reactions: r.reactions, added: r.added });
+  return answer(c, 'POST /api/bots/{id}/rows/{seq}/reactions', { ok: true, reactions: r.reactions, added: r.added });
 });
 
 // ---------- side chats (side-chats.ts) ----------
@@ -877,7 +935,7 @@ api.post('/bots/:id/rows/:seq/reactions', async (c) => {
 api.get('/bots/:id/side-chats', (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b || b.side_of) return c.json({ error: 'not found' }, 404);
-  return c.json({ chats: sideChatsAllowed(b) ? [] : listSideChats(b.id), allowed: !sideChatsAllowed(b), why: sideChatsAllowed(b) });
+  return answer(c, 'GET /api/bots/{id}/side-chats', { chats: sideChatsAllowed(b) ? [] : listSideChats(b.id), allowed: !sideChatsAllowed(b), why: sideChatsAllowed(b) });
 });
 
 api.post('/bots/:id/side-chats', async (c) => {
@@ -886,7 +944,7 @@ api.post('/bots/:id/side-chats', async (c) => {
   const body = await c.req.json<{ title?: unknown }>().catch(() => ({} as { title?: unknown }));
   const r = createSideChat(b.id, body?.title);
   if ('error' in r) return c.json({ error: r.error }, r.status);
-  return c.json({ chat: r });
+  return answer(c, 'POST /api/bots/{id}/side-chats', { chat: r });
 });
 
 api.patch('/side-chats/:id', async (c) => {
@@ -895,7 +953,7 @@ api.patch('/side-chats/:id', async (c) => {
   const body = await c.req.json<{ title?: unknown }>().catch(() => ({} as { title?: unknown }));
   const err = renameSideChat(sc.id, body?.title);
   if (err) return c.json({ error: err }, 400);
-  return c.json({ ok: true, chats: listSideChats(sc.side_of) });
+  return answer(c, 'PATCH /api/side-chats/{id}', { ok: true, chats: listSideChats(sc.side_of) });
 });
 
 // Delete: the side chat stops and leaves the list at once; POST .../restore brings it back for 10 minutes.
@@ -904,7 +962,7 @@ api.delete('/side-chats/:id', (c) => {
   if (!sc) return c.json({ error: 'not found' }, 404);
   interrupt(sc.id, { quiet: true });
   deleteSideChat(sc.id);
-  return c.json({ ok: true, undoUntil: now() + SIDE_UNDO_MS });
+  return answer(c, 'DELETE /api/side-chats/{id}', { ok: true, undoUntil: now() + SIDE_UNDO_MS });
 });
 
 api.post('/side-chats/:id/restore', (c) => {
@@ -912,7 +970,7 @@ api.post('/side-chats/:id/restore', (c) => {
   if (!sc) return c.json({ error: 'not found' }, 404);
   const err = restoreSideChat(sc.id);
   if (err) return c.json({ error: err }, 409);
-  return c.json({ ok: true, chats: listSideChats(sc.side_of) });
+  return answer(c, 'POST /api/side-chats/{id}/restore', { ok: true, chats: listSideChats(sc.side_of) });
 });
 
 // ---------- outside members (outside.ts, slack-link.ts) ----------
@@ -941,7 +999,7 @@ api.post('/bots/:id/interrupt', async (c) => {
   const member = typeof body?.member === 'string' && body.member ? body.member : undefined;
   if (member && b.kind !== 'room') return c.json({ error: 'Only a group chat has members to stop.' }, 400);
   const stopped = interrupt(b.id, { member });
-  return c.json({ ok: true, stopped });
+  return answer(c, 'POST /api/bots/{id}/interrupt', { ok: true, stopped });
 });
 
 api.post('/bots/:id/fresh', (c) => {
@@ -963,6 +1021,33 @@ api.post('/bots/:id/fresh/undo', (c) => {
   return c.json({ ok: true, generation: r.generation });
 });
 
+// "Allow for this conversation" (conversation-allows.ts): what this chat's current conversation allows, and
+// the line above the message box's Turn off. Only a person turns them off; the cards that allowed them say so.
+api.get('/bots/:id/allowed-here', (c) => {
+  const b = ownBot(c.get('user').id, c.req.param('id'));
+  if (!b || !inScope(c.get('scope'), chatOwner(b.id))) return c.json({ error: 'not found' }, 404);
+  return c.json({ allowed: listConversationAllows(b.id) });
+});
+api.post('/bots/:id/allowed-here/off', async (c) => {
+  const agent = c.get('agent');
+  if (agent) return c.json({ error: `Only a person can change what a bot may do. This sign-in belongs to ${agent}.`, code: 'agent_session' }, 403);
+  const user = c.get('user');
+  const b = ownBot(user.id, c.req.param('id'));
+  if (!b || !inScope(c.get('scope'), chatOwner(b.id))) return c.json({ error: 'not found' }, 404);
+  const sent = await c.req.json<{ id?: unknown }>().catch(() => ({} as { id?: unknown }));
+  const cards = turnOffConversation(user.id, b.id, typeof sent.id === 'string' ? sent.id : undefined);
+  const at = Date.now();
+  for (const apId of cards) {
+    const ap = db.prepare('SELECT bot_id, row_seq FROM approvals WHERE id=?').get(apId) as { bot_id: string; row_seq: number } | undefined;
+    const row = ap ? getRow(ap.bot_id, ap.row_seq) : undefined;
+    if (ap && row && row.body.type === 'card' && row.body.card === 'approval') updateRow(ap.bot_id, ap.row_seq, { ...row.body, convOff: at } as any);
+  }
+  // Browser kinds allowed here stop at once in the bot's open pages.
+  void refreshKindState(chatOwner(b.id), b.id).catch(() => undefined);
+  emitBot(b.id);
+  return c.json({ ok: true, turnedOff: cards.length, allowed: listConversationAllows(b.id) });
+});
+
 // Answer an approval card. The answer is read back: the reply is the approval as it now stands.
 // Every client must send the card's digest, so it can only approve the action it
 // showed, "Always allow" included. "Always allow" makes a rule for that bot and the card's tools only
@@ -973,8 +1058,8 @@ api.post('/approvals/:id', async (c) => {
   // A script signed in to the account (a Claude thread, a test) can never answer a card for the person.
   const agent = c.get('agent');
   if (agent) return c.json({ error: `Only a person can answer approval cards. This sign-in belongs to ${agent}.`, code: 'agent_session' }, 403);
-  const { decision, digest } = await c.req.json<{ decision: 'allow' | 'always' | 'deny'; digest?: string }>().catch(() => ({ decision: '' as 'deny', digest: undefined }));
-  if (!['allow', 'always', 'deny'].includes(decision)) return c.json({ error: 'decision must be allow, always or deny' }, 400);
+  const { decision, digest } = await c.req.json<{ decision: 'allow' | 'always' | 'conversation' | 'deny'; digest?: string }>().catch(() => ({ decision: '' as 'deny', digest: undefined }));
+  if (!['allow', 'always', 'conversation', 'deny'].includes(decision)) return c.json({ error: 'decision must be allow, always, conversation or deny' }, 400);
   if (digest !== undefined && typeof digest !== 'string') return c.json({ error: 'digest must be a string' }, 400);
   if (!digest) return c.json({ error: 'digest required' }, 400);
   const user = c.get('user');
@@ -1004,8 +1089,10 @@ api.post('/approvals/:id/plan', async (c) => {
   const user = c.get('user');
   const via = c.get('client') === 'bearer' ? 'phone app' : /Electron|CleftBot/i.test(c.req.header('user-agent') ?? '') ? 'Windows app' : 'web';
   const id = c.req.param('id');
-  const tool = (db.prepare('SELECT tool FROM approvals WHERE id=?').get(id) as { tool?: string } | undefined)?.tool;
-  if (tool !== 'posting_plan') return c.json({ error: 'not found' }, 404);
+  const ap = db.prepare('SELECT a.tool, b.user_id, a.status FROM approvals a JOIN bots b ON b.id=a.bot_id WHERE a.id=?').get(id) as { tool?: string; user_id?: string; status?: string } | undefined;
+  if (ap?.tool !== 'posting_plan' || ap.user_id !== user.id) return c.json({ error: 'not found' }, 404);
+  // Only a waiting card takes the days: a late or repeated answer must not change what a live one hands over.
+  if (ap.status !== 'pending') return c.json({ error: `Already ${ap.status}.`, code: 'not_pending', approval: approvalReadback(id) }, 409);
   handPlanDays(id, days);
   try {
     const approval = resolveApproval(user.id, id, decision, sent.digest, { by: displayName(user, currentSession(c)?.person ?? null), via, withPlan: true });
@@ -1024,25 +1111,56 @@ api.post('/approvals/:id/plan', async (c) => {
 api.post('/approvals/:id/secret', async (c) => {
   const agent = c.get('agent');
   if (agent) return c.json({ error: `Only a person can answer this card. This sign-in belongs to ${agent}.`, code: 'agent_session' }, 403);
-  const sent = await c.req.json<{ value?: unknown; digest?: unknown }>().catch(() => ({} as { value?: unknown; digest?: unknown }));
+  const sent = await c.req.json<{ value?: unknown; digest?: unknown; save?: unknown }>().catch(() => ({} as { value?: unknown; digest?: unknown; save?: unknown }));
   if (typeof sent.digest !== 'string' || !sent.digest) return c.json({ error: 'digest required' }, 400);
   if (c.req.header('x-cleft-via') === 'notification') return c.json({ error: 'Open the chat to answer this card.' }, 409);
   const user = c.get('user');
   const via = c.get('client') === 'bearer' ? 'phone app' : /Electron|CleftBot/i.test(c.req.header('user-agent') ?? '') ? 'Windows app' : 'web';
   const id = c.req.param('id');
-  const apRow = db.prepare('SELECT tool, bot_id, row_seq FROM approvals WHERE id=?').get(id) as { tool?: string; bot_id: string; row_seq: number } | undefined;
-  if (apRow?.tool !== 'secure_input') return c.json({ error: 'not found' }, 404);
+  const apRow = db.prepare('SELECT a.tool, a.bot_id, a.row_seq, b.user_id, a.status FROM approvals a JOIN bots b ON b.id=a.bot_id WHERE a.id=?').get(id) as { tool?: string; bot_id: string; row_seq: number; user_id: string; status: string } | undefined;
+  if (apRow?.tool !== 'secure_input' || apRow.user_id !== user.id) return c.json({ error: 'not found' }, 404);
+  // A card that is not waiting is answered before anything is handed over or dropped for it.
+  if (apRow.status !== 'pending') return c.json({ error: `Already ${apRow.status}.`, code: 'not_pending', approval: approvalReadback(id) }, 409);
   // A server key (drive-pull.ts) is a whole JSON file; page fields take up to 512 characters.
   const cardRow = getRow(apRow.bot_id, apRow.row_seq);
   const max = (cardRow?.body as any)?.secret?.kind === 'service_key' ? 8192 : 512;
   if (typeof sent.value !== 'string' || !sent.value.length || sent.value.length > max) return c.json({ error: `Type a value (up to ${max} characters).` }, 400);
   handSecret(id, sent.value);
   sent.value = '';
+  // "Save to my logins": kept for the person who typed it, once it went into the page (browser-cards.ts).
+  if (sent.save === true && (cardRow?.body as any)?.secret?.canSave) askToSave(id, personOfRequest(c));
   try {
     const approval = resolveApproval(user.id, id, 'allow', sent.digest, { by: displayName(user, currentSession(c)?.person ?? null), via, withSecret: true });
     return c.json({ ok: true, approval });
   } catch (e) {
     dropSecret(id);
+    if (e instanceof ApprovalError && e.code !== 'not_found') return c.json({ error: e.message, code: e.code, approval: e.approval }, 409);
+    return c.json({ error: 'not found' }, 404);
+  }
+});
+
+/**
+ * Sign in on a saved-login card (vault.ts, browser-cards.ts useSavedLogin): the server types the saved login
+ * into the bot's page. Only the login's own person may press it (Robin's card for Sam's login: only Sam's
+ * sign-in), only from the apps, never a notification, a script or "Always allow".
+ */
+api.post('/approvals/:id/login', async (c) => {
+  const agent = c.get('agent');
+  if (agent) return c.json({ error: `Only a person can answer this card. This sign-in belongs to ${agent}.`, code: 'agent_session' }, 403);
+  const sent = await c.req.json<{ digest?: unknown }>().catch(() => ({} as { digest?: unknown }));
+  if (typeof sent.digest !== 'string' || !sent.digest) return c.json({ error: 'digest required' }, 400);
+  if (c.req.header('x-cleft-via') === 'notification') return c.json({ error: 'Open the chat to answer this card.' }, 409);
+  const user = c.get('user');
+  const via = c.get('client') === 'bearer' ? 'phone app' : /Electron|CleftBot/i.test(c.req.header('user-agent') ?? '') ? 'Windows app' : 'web';
+  const id = c.req.param('id');
+  const apRow = db.prepare('SELECT a.tool, b.user_id, a.status FROM approvals a JOIN bots b ON b.id=a.bot_id WHERE a.id=?').get(id) as { tool?: string; user_id: string; status: string } | undefined;
+  if (apRow?.tool !== 'saved_login' || apRow.user_id !== user.id) return c.json({ error: 'not found' }, 404);
+  if (apRow.status !== 'pending') return c.json({ error: `Already ${apRow.status}.`, code: 'not_pending', approval: approvalReadback(id) }, 409);
+  if (!mayAnswerCard(id, personOfRequest(c))) return c.json({ error: 'This is someone else\'s saved login. Only they can press Sign in.', code: 'not_owner' }, 403);
+  try {
+    const approval = resolveApproval(user.id, id, 'allow', sent.digest, { by: displayName(user, currentSession(c)?.person ?? null), via, withLogin: true });
+    return c.json({ ok: true, approval });
+  } catch (e) {
     if (e instanceof ApprovalError && e.code !== 'not_found') return c.json({ error: e.message, code: e.code, approval: e.approval }, 409);
     return c.json({ error: 'not found' }, 404);
   }
@@ -1097,11 +1215,21 @@ api.post('/bots/:id/cards/:seq/view', async (c) => {
     throw e;
   }
   const updated = updateRow(b.id, row.seq, out.card);
+  // A check-in offer (checkin-offer.ts): the tap makes the check-in for the bot that offered it, and posts no
+  // chat message and starts no turn. A side chat's or a group's check-in belongs to the bot itself.
+  if (row.body.quick && row.body.checkin && out.message !== undefined) {
+    const blk: any = out.card.blocks[0];
+    const owner = b.kind === 'room' ? row.body.from?.id : chatOwner(b.id);
+    if (owner && Number.isInteger(blk?.picked?.[0])) {
+      acceptCheckinOffer({ userId: user.id, ownerName: displayName(user, currentSession(c)?.person ?? null) || 'The person', botId: owner, chatId: b.id, offer: row.body.checkin, picked: blk.picked[0] });
+    }
+    return c.json({ ok: true, row: updated });
+  }
   if (out.message) {
     const agent = c.get('agent');
     const from: MessageBody['from'] | undefined = agent ? { kind: 'agent', id: 'session', name: agent } : undefined;
-    // Choice buttons in a group answer the bot that asked, so the reply @mentions it (as Reply does).
-    const asker = b.kind === 'room' && row.body.quick && row.body.from ? `@${row.body.from.name} ` : '';
+    // Choice buttons and A2UI buttons in a group answer the bot that asked, so the reply @mentions it (as Reply does).
+    const asker = b.kind === 'room' && (row.body.quick || out.mention) && row.body.from ? `@${row.body.from.name} ` : '';
     appendRow(b.id, 'message', { type: 'message', role: 'user', text: asker + out.message, ...(from ? { from } : {}) });
     const told = asker + (out.context ?? out.message);
     const said = agent ? `${agentNote(agent, c.get('user').name)}\n${told}` : told;
@@ -1196,7 +1324,7 @@ api.post('/bots/:id/cards/:seq/dismiss', (c) => {
 
 api.get('/bots/:id/routines', (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
-  return b ? c.json({ routines: listRoutines(b.id) }) : c.json({ error: 'not found' }, 404);
+  return b ? answer(c, 'GET /api/bots/{id}/routines', { routines: listRoutines(b.id) }) : c.json({ error: 'not found' }, 404);
 });
 
 api.patch('/routines/:id', async (c) => {
@@ -1206,19 +1334,25 @@ api.patch('/routines/:id', async (c) => {
   if (sent.enabled === undefined && sent.quiet === undefined) return c.json({ error: 'Send enabled or quiet.' }, 400);
   if (sent.enabled !== undefined && typeof sent.enabled !== 'boolean') return c.json({ error: 'enabled must be true or false.' }, 400);
   if (sent.quiet !== undefined && typeof sent.quiet !== 'boolean') return c.json({ error: 'quiet must be true or false.' }, 400);
+  // Switching one on: the 15-minute floor and the cap of 20 (routines.ts).
+  if (sent.enabled === true && !r.enabled) {
+    const rule = routineRuleProblem({ userId: c.get('user').id, schedule: r.schedule, timezone: r.timezone, runOnce: !!r.run_once, exceptId: r.id });
+    if (rule) return c.json({ error: rule }, 409);
+  }
   if (typeof sent.quiet === 'boolean') db.prepare('UPDATE routines SET quiet=? WHERE id=?').run(sent.quiet ? 1 : 0, r.id);
   if (typeof sent.enabled === 'boolean') db.prepare('UPDATE routines SET enabled=? WHERE id=?').run(sent.enabled ? 1 : 0, r.id);
+  if (typeof sent.enabled === 'boolean') sent.enabled ? scheduleRoutine(toRoutine(db.prepare('SELECT * FROM routines WHERE id=?').get(r.id))) : unscheduleRoutine(r.id);
+  // Read after scheduling: switching on clears a failure count and "turned off after repeated failures".
   const next = toRoutine(db.prepare('SELECT * FROM routines WHERE id=?').get(r.id));
-  if (typeof sent.enabled === 'boolean') sent.enabled ? scheduleRoutine(next) : unscheduleRoutine(r.id);
   hub.emit(c.get('user').id, { type: 'routines', botId: r.bot_id });
-  return c.json({ routine: next });
+  return answer(c, 'PATCH /api/routines/{id}', { routine: next });
 });
 
 api.post('/routines/:id/run', (c) => {
   const r = db.prepare('SELECT r.* FROM routines r JOIN bots b ON b.id=r.bot_id WHERE r.id=? AND b.user_id=?').get(c.req.param('id'), c.get('user').id) as any;
   if (!r) return c.json({ error: 'not found' }, 404);
   runRoutine(r.id);
-  return c.json({ ok: true });
+  return answer(c, 'POST /api/routines/{id}/run', { ok: true });
 });
 
 api.delete('/routines/:id', async (c) => {
@@ -1228,18 +1362,68 @@ api.delete('/routines/:id', async (c) => {
   await deleteEventTrigger(r.id);
   db.prepare('DELETE FROM routines WHERE id=?').run(r.id);
   hub.emit(c.get('user').id, { type: 'routines', botId: r.bot_id });
-  return c.json({ ok: true });
+  return answer(c, 'DELETE /api/routines/{id}', { ok: true });
 });
 
 api.get('/bots/:id/tasks', (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
-  return b ? c.json({ tasks: listTasks(b.id) }) : c.json({ error: 'not found' }, 404);
+  return b ? answer(c, 'GET /api/bots/{id}/tasks', { tasks: listTasks(b.id) }) : c.json({ error: 'not found' }, 404);
 });
 
 api.get('/tasks', (c) => {
   const rows = db.prepare('SELECT t.* FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE b.user_id=? ORDER BY t.updated_at DESC LIMIT 200').all(c.get('user').id) as any[];
   const scope = c.get('scope');
-  return c.json({ tasks: rows.filter((r) => inScope(scope, r.bot_id)).map((r) => ({ id: r.id, botId: r.bot_id, title: r.title, state: r.state, note: r.note, updatedAt: r.updated_at })) });
+  return answer(c, 'GET /api/tasks', { tasks: rows.filter((r) => inScope(scope, r.bot_id)).map(toTask) });
+});
+
+// The person's own changes to a task: rename it, change its note or state (Done, back to working), or delete it.
+// Before these existed only the bot could change a task, so one it never closed (a cut-off turn) stayed forever.
+const TASK_STATES = ['working', 'needs_input', 'done'] as const;
+const ownTask = (userId: string, botId: string, taskId: string) => {
+  const b = ownBot(userId, botId);
+  return b ? (db.prepare('SELECT * FROM tasks WHERE id=? AND bot_id=?').get(taskId, b.id) as any) ?? null : null;
+};
+
+api.patch('/bots/:id/tasks/:taskId', async (c) => {
+  const t = ownTask(c.get('user').id, c.req.param('id'), c.req.param('taskId'));
+  if (!t) return c.json({ error: 'not found' }, 404);
+  const body = await c.req.json<{ title?: unknown; note?: unknown; state?: unknown }>().catch(() => null);
+  if (!body || typeof body !== 'object') return c.json({ error: 'Send title, note or state.' }, 400);
+  const title = typeof body.title === 'string' ? body.title.trim().slice(0, 300) : undefined;
+  if (title !== undefined && !title) return c.json({ error: 'A task needs a title.' }, 400);
+  const note = typeof body.note === 'string' ? body.note.trim().slice(0, 2000) : undefined;
+  const state = body.state === undefined ? undefined : (TASK_STATES as readonly unknown[]).includes(body.state) ? (body.state as string) : null;
+  if (state === null) return c.json({ error: 'state must be working, needs_input or done.' }, 400);
+  if (title === undefined && note === undefined && state === undefined) return c.json({ error: 'Nothing to change.' }, 400);
+  db.prepare('UPDATE tasks SET title=?, note=?, state=?, updated_at=? WHERE id=?').run(title ?? t.title, note ?? t.note, state ?? t.state, now(), t.id);
+  hub.emit(c.get('user').id, { type: 'tasks', botId: t.bot_id });
+  return answer(c, 'PATCH /api/bots/{id}/tasks/{taskId}', { task: toTask(db.prepare('SELECT * FROM tasks WHERE id=?').get(t.id)) });
+});
+
+api.delete('/bots/:id/tasks/:taskId', (c) => {
+  const t = ownTask(c.get('user').id, c.req.param('id'), c.req.param('taskId'));
+  if (!t) return c.json({ error: 'not found' }, 404);
+  db.prepare('DELETE FROM tasks WHERE id=?').run(t.id);
+  hub.emit(c.get('user').id, { type: 'tasks', botId: t.bot_id });
+  // The whole row comes back so the app's Undo can put it back exactly (POST .../tasks/restore).
+  return answer(c, 'DELETE /api/bots/{id}/tasks/{taskId}', { ok: true, removed: { id: t.id, title: t.title, state: t.state, note: t.note, createdAt: t.created_at, updatedAt: t.updated_at } });
+});
+
+api.post('/bots/:id/tasks/restore', async (c) => {
+  const b = ownBot(c.get('user').id, c.req.param('id'));
+  if (!b) return c.json({ error: 'not found' }, 404);
+  const r = await c.req.json<{ id?: unknown; title?: unknown; state?: unknown; note?: unknown; createdAt?: unknown; updatedAt?: unknown }>().catch(() => null);
+  const id = typeof r?.id === 'string' && /^task_[A-Za-z0-9_-]{1,64}$/.test(r.id) ? r.id : null;
+  const title = typeof r?.title === 'string' ? r.title.trim().slice(0, 300) : '';
+  if (!id || !title) return c.json({ error: 'Send the task that was deleted.' }, 400);
+  if (db.prepare('SELECT 1 FROM tasks WHERE id=?').get(id)) return c.json({ error: 'That task is already there.' }, 409);
+  const state = (TASK_STATES as readonly unknown[]).includes(r?.state) ? (r!.state as string) : 'working';
+  const at = now();
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= at ? v : at);
+  db.prepare('INSERT INTO tasks(id,bot_id,title,state,note,created_at,updated_at) VALUES (?,?,?,?,?,?,?)')
+    .run(id, b.id, title, state, typeof r?.note === 'string' ? r.note.slice(0, 2000) : '', num(r?.createdAt), num(r?.updatedAt));
+  hub.emit(c.get('user').id, { type: 'tasks', botId: b.id });
+  return answer(c, 'POST /api/bots/{id}/tasks/restore', { task: toTask(db.prepare('SELECT * FROM tasks WHERE id=?').get(id)) });
 });
 
 api.get('/bots/:id/memories', (c) => {

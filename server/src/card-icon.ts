@@ -27,6 +27,7 @@ export interface CardIconInput {
   risk?: string;
   mail?: unknown;
   secret?: unknown;
+  vault?: unknown;
   purchase?: unknown;
   screenHelp?: unknown;
   postingPlan?: unknown;
@@ -114,7 +115,7 @@ const WORD_GLYPHS: [RegExp, string][] = [
 
 /** The icon id for a card: an app's logo, else a glyph for what the action does. Always one of CARD_ICONS. */
 export function cardIconId(card: CardIconInput): string {
-  if (card.secret) return 'secret';
+  if (card.secret || card.vault) return 'secret';
   if (card.purchase) return 'purchase';
   if (card.screenHelp) return 'hand';
   if (card.postingPlan) return 'posting';

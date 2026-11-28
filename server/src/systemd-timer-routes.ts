@@ -5,7 +5,7 @@ import { requireUser, type AuthVars } from './lib/auth.js';
 import { getBotRow } from './store.js';
 import { isOwner } from './plugins/owner.js';
 import { isMaintainer } from './maintainer-guard.js';
-import { requestApproval } from './agent/loop.js';
+import { expireApproval, requestApproval } from './agent/loop.js';
 import { changeTimer, readHostTimers, validateTarget } from './systemd-timers.js';
 import { timerHostIds, timerHosts } from './systemd-timer-hosts.js';
 
@@ -55,7 +55,15 @@ systemdTimersApi.post('/bots/:id/systemd-timers/change', async (c) => {
   if (!validateTarget(hosts(), host, unit) || !['enable', 'disable'].includes(action)) return c.json({ error: 'Invalid timer target.' }, 400);
   try {
     const result = await changeTimer(hosts(), { host, unit, action }, {
-      approve: async (change) => requestApproval({ userId: c.get('user').id, botId: c.req.param('id') }, { decision: 'ask', key: 'systemctl', asks: [], title: `System timer: ${action} ${unit} on ${hostLabel(host)}`, detail: `Change ${unit} on ${hostLabel(host)}: ${action} and ${action === 'enable' ? 'start' : 'stop'} the timer.` }, change, null),
+      // The card expires if the page that asked goes away (a proxy timeout, a closed tab): nothing waits to run it.
+      approve: async (change) => {
+        const meta: { approvalId?: string } = {};
+        const gone = () => { if (meta.approvalId) expireApproval(meta.approvalId); };
+        c.req.raw.signal?.addEventListener('abort', gone, { once: true });
+        try {
+          return await requestApproval({ userId: c.get('user').id, botId: c.req.param('id') }, { decision: 'ask', key: 'systemctl', asks: [], title: `System timer: ${action} ${unit} on ${hostLabel(host)}`, detail: `Change ${unit} on ${hostLabel(host)}: ${action} and ${action === 'enable' ? 'start' : 'stop'} the timer.` }, change, null, meta);
+        } finally { c.req.raw.signal?.removeEventListener('abort', gone); }
+      },
       run: async (h, u, a) => { await run(h, [a, '--now', '--', u]); },
       inspect: unitState,
     });

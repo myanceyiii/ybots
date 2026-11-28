@@ -63,6 +63,28 @@ await test('privileged, destructive and secret-touching commands are dangerous',
   assert.ok(guard.classifyCommand('sudo rm -rf /var/x').reasons.includes('runs as root'));
 });
 
+await test('read-only lists do not let writes or programs through (audit 2026-11-27)', async () => {
+  for (const c of [
+    'echo "$(python3 -c 1)"', 'echo "`id`"', 'cat "${HOME}/x"',
+    "ssh -o ProxyCommand='bash -c id' host ls", 'ssh -oProxyCommand=x host ls', 'ssh -F /tmp/cfg host ls', "ssh -o LocalCommand=id host ls",
+    "sed -n '1e id' notes.txt", 'sed -ni s/a/b/ notes.txt', "sed -n '1w /tmp/out' notes.txt", 'sed -ibak s/a/b/ x',
+    'git diff --output=/tmp/x', 'git log --output /tmp/x', 'sort -o /tmp/x notes.txt', 'tree -o /tmp/x', 'uniq a.txt b.txt', 'xxd a.bin b.hex', 'xxd -r a.hex',
+  ]) assert.notEqual(kind(c), 'read', c);
+  for (const c of ["sed -n '10,40p' a.ts", "sed -n '/start/,/end/p' a.ts", 'sort -k2 a.txt', 'uniq -c a.txt', 'tree -L 2', 'xxd a.bin', 'ssh -o ConnectTimeout=5 host uptime', "echo 'hi $(not run)'"]) assert.equal(kind(c), 'read', c);
+});
+
+await test('a link inside the working copy is judged by where it leads (audit 2026-11-27)', async () => {
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'mg-work-'));
+  process.env.MAINTAINER_DEV_DIRS = work;
+  try {
+    fs.symlinkSync('/etc/hosts', path.join(work, 'hosts-link'));
+    fs.symlinkSync('/etc/does-not-exist-yet', path.join(work, 'dangling'));
+    assert.equal(guard.classifyWrite(path.join(work, 'plain.txt')).kind, 'read');
+    assert.equal(guard.classifyWrite(path.join(work, 'hosts-link')).kind, 'danger');
+    assert.equal(guard.classifyWrite(path.join(work, 'dangling')).kind, 'danger');
+  } finally { delete process.env.MAINTAINER_DEV_DIRS; fs.rmSync(work, { recursive: true, force: true }); }
+});
+
 await test("Hermes' own findings count, but a mere -c or heredoc wrapper does not", async () => {
   assert.equal(kind('make build', ['stop/restart system service']), 'danger');
   assert.equal(kind('python3 -c "print(1)"', ['script execution via -e/-c flag']), 'other');

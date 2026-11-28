@@ -134,12 +134,17 @@ function touchSession(t: string, expiresAt: number) {
   try { db.prepare('UPDATE auth_sessions SET expires_at=?, last_seen_at=? WHERE token=?').run(now() + TTL_MS, now(), t); } catch { /* a read-only moment: next request */ }
 }
 
+/** decodeURIComponent that answers undefined for a malformed value instead of throwing (a bad cookie must not crash an upgrade). */
+export function safeDecode(v: string): string | undefined {
+  try { return decodeURIComponent(v); } catch { return undefined; }
+}
+
 /** The session token in a Cookie header that names a live session, if any. */
 export function tokenFromCookieHeader(cookieHeader: string | undefined): string | undefined {
   const parts = cookieHeader?.split(/;\s*/) ?? [];
   for (const name of [COOKIE, ...LEGACY_COOKIES]) {
     const m = parts.find((p) => p.startsWith(`${name}=`));
-    const t = m ? decodeURIComponent(m.slice(name.length + 1)) : undefined;
+    const t = m ? safeDecode(m.slice(name.length + 1)) : undefined;
     if (t && userFromToken(t)) return t;
   }
   return undefined;
@@ -149,7 +154,8 @@ export function userFromCookieHeader(cookieHeader: string | undefined): User | n
   const parts = cookieHeader?.split(/;\s*/) ?? [];
   for (const name of [COOKIE, ...LEGACY_COOKIES]) {
     const m = parts.find((p) => p.startsWith(`${name}=`));
-    const u = m ? userFromToken(decodeURIComponent(m.slice(name.length + 1))) : null;
+    const t = m ? safeDecode(m.slice(name.length + 1)) : undefined;
+    const u = t ? userFromToken(t) : null;
     if (u) return u;
   }
   return null;
@@ -291,6 +297,8 @@ export function isLocalRequest(c: Context): boolean {
  */
 export function isOwnerKey(given: string): boolean {
   const want = crypto.createHmac('sha256', env.sessionSecret).update('owner-login').digest();
+  // Buffer.from(…, 'hex') stops at the first non-hex character, so check the whole string first.
+  if (typeof given !== 'string' || !/^[0-9a-f]{64}$/i.test(given)) return false;
   const got = Buffer.from(given, 'hex');
   return got.length === want.length && crypto.timingSafeEqual(got, want);
 }

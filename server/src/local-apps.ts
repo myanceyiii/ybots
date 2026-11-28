@@ -1,3 +1,4 @@
+import { toolKind } from './action-kinds.js';
 import { redact } from './lib/redact.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -121,6 +122,8 @@ export interface AppTool {
   description: string;
   inputSchema: Record<string, unknown>;
   readOnly: boolean;
+  /** Its server marks it destructive (MCP destructiveHint): it asks as deleting does (action-kinds.ts). */
+  destructive?: boolean;
 }
 
 export type AppDecision = 'allow' | 'ask' | 'block';
@@ -379,7 +382,10 @@ async function connect(conn: Conn): Promise<void> {
             description: `[${cfg.name ?? cfg.id}] ${t.description ?? t.title ?? t.name}`.slice(0, 2000),
             inputSchema: (t.inputSchema as Record<string, unknown>) ?? { type: 'object', properties: {} },
             // The Hermes MCP server marks nothing read-only; its reads are sorted here (hermes-mcp-tools.ts).
-            readOnly: t.annotations?.readOnlyHint === true || (cfg.id === HERMES_MCP_APP && hermesMcpKind(t.name) === 'read'),
+            // A tool whose name says it deletes, sends, shares, posts, pays or changes a credential never runs on a
+            // read-only hint alone (action-kinds.ts); its server's destructiveHint makes it a delete.
+            readOnly: (t.annotations?.readOnlyHint === true && !toolKind(t.name, { destructive: t.annotations?.destructiveHint === true })) || (cfg.id === HERMES_MCP_APP && hermesMcpKind(t.name) === 'read'),
+            ...(t.annotations?.destructiveHint === true ? { destructive: true } : {}),
           });
         }
         cursor = page.nextCursor;
@@ -467,7 +473,21 @@ export async function appsStatus(): Promise<{ apps: AppStatus[]; configFile: str
 
 /** `*` matches anything; matching ignores case. */
 export function matches(patterns: string[] | undefined, name: string): boolean {
-  return (patterns ?? []).some((p) => new RegExp(`^${p.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 'i').test(name));
+  return (patterns ?? []).some((p) => wildMatch(p, name));
+}
+
+/** Glob with only `*`, ignoring case, in linear time (no regular expression to backtrack on many stars). */
+export function wildMatch(pattern: string, text: string): boolean {
+  const p = pattern.toLowerCase(), s = text.toLowerCase();
+  let i = 0, j = 0, star = -1, mark = 0;
+  while (j < s.length) {
+    if (i < p.length && p[i] !== '*' && p[i] === s[j]) { i++; j++; }
+    else if (i < p.length && p[i] === '*') { star = i++; mark = j; }
+    else if (star !== -1) { i = star + 1; j = ++mark; }
+    else return false;
+  }
+  while (i < p.length && p[i] === '*') i++;
+  return i === p.length;
 }
 
 /**

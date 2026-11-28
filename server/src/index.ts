@@ -1,11 +1,16 @@
+import { answer } from './lib/contract.js';
+import { API_VERSION, MIN_APP } from './app-support.js';
 import { installProblemLog, requestMeter, startHealthWatch, statusApi, dbAnswers } from './status.js';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { compress } from 'hono/compress';
+import { bodyLimit } from 'hono/body-limit';
+import type { Context } from 'hono';
 import { startDbCare } from './db-care.js';
 import { pruneScriptSessions, sessionsApi } from './sessions.js';
 import { usageApi } from './usage.js';
+import { activityApi, backfillActivity, pruneActivity } from './activity.js';
 import { accountExportApi } from './account-export.js';
 import { desktopUpdatesApi } from './desktop-updates.js';
 import { buildInfo } from './build-info.js';
@@ -27,8 +32,11 @@ import { initSubagents } from './agent/subagents.js';
 import { initRooms, setRoomEnqueue } from './agent/rooms.js';
 import { initSlackLink, startSlackLink } from './slack-link.js';
 import { checkinsApi } from './routes-proactive.js';
+import { needsYouApi } from './needs-you.js';
+import { vaultApi } from './vault.js';
 import { roomsApi } from './routes-rooms.js';
 import { busyBotNames, enqueue, expireStaleApprovals, interruptTurnsForUpdate } from './agent/loop.js';
+import { resumeHops, startHopSweeper } from './bot-handoffs.js';
 import { onShutdown } from './shutdown.js';
 import { stallViewsAfterRestart } from './view-stall.js';
 import { desSelfTest } from './lib/des.js';
@@ -64,6 +72,9 @@ startNotify();
 startListSummaries();
 startSideChats();
 expireStaleApprovals();
+// Handoffs between bots a restart cut off start again; waits that ran out fail out loud (bot-handoffs.ts).
+try { const n = resumeHops(); if (n) console.log(`[hops] resumed ${n} handoff(s)`); } catch (e) { console.warn('[hops] could not resume', e); }
+startHopSweeper();
 try { stallViewsAfterRestart(); } catch (e) { console.warn('[views] could not mark stopped progress after restart', e); }
 // Poses that were being made when the last process stopped will not finish (avatars.ts).
 stopStalePoseJobs();
@@ -129,10 +140,13 @@ app.onError((e, c) => {
 // A JSON request larger than anything the apps send is refused before it is read (files and voice go up
 // as uploads, not JSON, and keep their own limits).
 const MAX_JSON = 16 * 1024 * 1024;
-app.use('/api/*', async (c, next) => {
-  if (/json/i.test(c.req.header('content-type') ?? '') && Number(c.req.header('content-length') ?? 0) > MAX_JSON) return c.json({ error: 'That is too much to send in one go.', code: 'too_large' }, 413);
-  await next();
-});
+// Counted as the body arrives (Hono's bodyLimit), so a chunked request without a Content-Length is held to
+// the same limit. Uploads (attachments, voice) are at most 25 MB; every other body is far smaller.
+const MAX_BODY = 30 * 1024 * 1024;
+const tooLarge = (c: Context) => c.json({ error: 'That is too much to send in one go.', code: 'too_large' }, 413);
+const jsonLimit = bodyLimit({ maxSize: MAX_JSON, onError: tooLarge });
+const anyLimit = bodyLimit({ maxSize: MAX_BODY, onError: tooLarge });
+app.use('/api/*', (c, next) => (/json/i.test(c.req.header('content-type') ?? '') ? jsonLimit(c, next) : anyLimit(c, next)));
 // Cookie-authenticated writes must come from the app's own pages (CSRF; see sameOriginWrites).
 app.use('/api/*', sameOriginWrites);
 // From the machine itself, health also names the bots with a turn running: a deploy (cleft-ops) waits for
@@ -142,6 +156,9 @@ app.get('/api/health', (c) => {
   if (!dbAnswers()) return c.json({ ok: false, engine: 'hermes', error: 'The database is not answering.' }, 503);
   return c.json(isLocalRequest(c) ? { ok: true, engine: 'hermes', busy: busyBotNames(), commit: buildInfo().commit, uptimeSec: Math.round(process.uptime()) } : { ok: true, engine: 'hermes' });
 });
+// Which installed apps still work with this server (app-support.ts): no sign-in needed, nothing private in it.
+app.get('/api/app-support', (c) => answer(c, 'GET /api/app-support', { api: API_VERSION, minApp: { ...MIN_APP }, updateUrl: { android: safeUpdateUrl(process.env.ANDROID_UPDATE_URL) } }));
+const safeUpdateUrl = (v: string | undefined) => (v && /^https:\/\/[^\s]+$/.test(v.trim()) ? v.trim() : null);
 // Stopping: the apps are told first, so they say "updating" instead of "connection lost" and come back
 // the moment the new server answers.
 onShutdown('tell the apps', async () => { hub.broadcast({ type: 'restarting' }); await new Promise((r) => setTimeout(r, 150)); }, 600);
@@ -153,6 +170,8 @@ onShutdown('interrupt running turns', async () => {
 // The app's tools for the agent engines (MCP).
 app.route('/mcp', mcpApi);
 app.route('/api/checkins', checkinsApi);
+app.route('/api/needs-you', needsYouApi);
+app.route('/api/vault', vaultApi);
 app.route('/api/rooms', roomsApi);
 app.route('/api/plugins', pluginsApi);
 app.route('/api/connectors/oauth', connectorsOAuth);
@@ -168,11 +187,14 @@ app.route('/api', extrasApi);
 app.route('/api', statusApi);
 app.route('/api', sessionsApi);
 app.route('/api', usageApi);
+app.route('/api', activityApi);
 app.route('/api', accountExportApi);
 app.route('/api', desktopUpdatesApi);
 // An address under /api that no route answers is a mistake in the caller, said as one: it used to get the
 // web app's page with a 200, which an app then failed to read as JSON.
 app.all('/api/*', (c) => c.json({ error: 'There is nothing at this address.', code: 'no_route' }, 404));
+// For tests/app-routes.mjs: every route the server answers, so the suite can check each address the apps call.
+if (process.env.CLEFT_ROUTE_LIST) fs.writeFileSync(process.env.CLEFT_ROUTE_LIST, JSON.stringify(app.routes.map((r) => ({ method: r.method, path: r.path }))));
 
 app.get('/robots.txt', (c) => c.text('User-agent: *\nDisallow: /\n', 200, { 'Cache-Control': 'public, max-age=86400' }));
 
@@ -219,6 +241,8 @@ if (compatEnv('NO_SCHEDULER') !== '1') {
   initRoutines(enqueue);
   void initTriggers(enqueue);
 initProactive(enqueue);
+// The activity trail (activity.ts): copy the older logs in once, then keep it to 180 days.
+try { backfillActivity(); pruneActivity(); } catch (e) { console.warn('[activity] start-up step failed', e); }
 } else console.log('[cleftbot] scheduler disabled (NO_SCHEDULER=1)');
 startIdleWatcher();
 // The database is checked now; snapshots and housekeeping run daily (db-care.ts), not on a dev server sharing a copy.

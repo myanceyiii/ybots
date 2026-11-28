@@ -72,7 +72,8 @@ function tick() {
 const minutesBetween = (from: string, to: string) => {
   const [fh, fm] = from.split(':').map(Number);
   const [th, tm] = to.split(':').map(Number);
-  return th * 60 + tm - (fh * 60 + fm);
+  // Across midnight (a 23:58 slot seen at 00:01) the gap wraps instead of going negative.
+  return (((th * 60 + tm - (fh * 60 + fm)) % 1440) + 1440) % 1440;
 };
 
 export function fireCheckin(userId: string, silentStreak = 0, force = false) {
@@ -97,6 +98,8 @@ export function fireCheckin(userId: string, silentStreak = 0, force = false) {
 
   enqueueFn(primary.id, {
     type: 'system',
+    // The activity trail (activity.ts) names this as a check-in: it ran with nobody there.
+    origin: { kind: 'goal', id: 'checkin', name: 'Scheduled check-in' },
     text:
       `[check-in] Scheduled proactive check-in. Look at what's going on (use connected apps like calendar or email if useful, read your memories, check on other Bots if needed). ` +
       `If there is something genuinely useful to tell the user (a decision they owe, something that changed, today's schedule, a finished result), send ONE short message. ` +

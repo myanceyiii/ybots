@@ -1,9 +1,10 @@
-import { conversationKey, rotateIfDue } from '../session-rotation.js';
+import { conversationKey, handoffDelivered, pendingHandoff, rotateIfDue } from '../session-rotation.js';
 import { imageParts } from '../attach-images.js';
 import crypto from 'node:crypto';
 import { db, now } from '../db.js';
 import { newId } from '../lib/ids.js';
 import { hub } from '../lib/hub.js';
+import { ROUTINE_FAIL_LIMIT, routineRunEnded } from '../routines.js';
 import { appendRow, chatOwner, emitBot, getBotRow, getLive, getRow, setLive, updateRow } from '../store.js';
 import { choiceTurnEnd, choiceTurnStart } from '../choices.js';
 import { chatsOf, sideChatNote, takeRunSlot } from '../side-chats.js';
@@ -22,6 +23,8 @@ import { liveModel, parseFallback } from '../model-badge.js';
 import type { Route } from '../model-router.js';
 import { activityFor, appToolName, humanizeSlug, type Policy } from './tools.js';
 import { alwaysAllowFor, createRules, isMailSend } from '../allow-rules.js';
+import { createConversationAllows } from '../conversation-allows.js';
+import { KIND_NAME, KIND_SAYS } from '../action-kinds.js';
 import { hermesTitle } from '../plugins/hermes-gate.js';
 import { takeFeedback } from '../reaction-feedback.js';
 import { isRoom } from './rooms.js';
@@ -29,6 +32,8 @@ import { finished as roomTurnFinished, starting as roomTurnStarting, stopRoom } 
 import { captionFrom, captionParts, type CaptionParts } from '../caption.js';
 import { stallTurnViews } from '../view-stall.js';
 import { busySendOf, steerText, type BusySend } from '../steer-mode.js';
+import { logActivity, noteResult, setStarterLookup, type Starter } from '../activity.js';
+import { hopNotes, hopTriggerText, hopTurnEnded, setHopQueue } from '../bot-handoffs.js';
 
 /**
  * A turn: one message handed to the bot's Hermes engine and streamed back into the conversation.
@@ -46,9 +51,11 @@ export type Trigger =
   | { type: 'user'; text: string; agent?: string | null; images?: string[] }
   /** quiet: post only when something is found (routines.quiet). runSeq: the "Running routine" row. */
   | { type: 'routine'; routineId: string; name: string; prompt: string; quiet?: boolean; runSeq?: number }
-  | { type: 'bot'; fromBotId: string; fromName: string; text: string; depth: number }
+  /** hopId: a typed handoff (bot-handoffs.ts); the turn's reply is the answer, written into the asking chat. */
+  | { type: 'bot'; fromBotId: string; fromName: string; text: string; depth: number; hopId?: string; hopKind?: 'ask' | 'mention' }
   /** `room`: one member's share of a group message (rooms.ts); the group's Stop can end it (room-runs.ts). */
-  | { type: 'system'; text: string; room?: { id: string; name: string; run: string }; depth?: number; images?: string[] }
+  /** `origin`: what started it, for the activity trail (activity.ts), when it is not a person's message. */
+  | { type: 'system'; text: string; room?: { id: string; name: string; run: string }; depth?: number; images?: string[]; origin?: Starter }
   /** From an outside member (slack-link.ts). Information only: it never answers or expires an approval. */
   | { type: 'external'; fromId: string; fromName: string; via: 'slack'; channel: string; kind: string | null; text: string; depth: number };
 
@@ -67,6 +74,7 @@ export function enqueue(botId: string, trigger: Trigger) {
   queues.set(botId, next);
   next.finally(() => { if (queues.get(botId) === next) queues.delete(botId); });
 }
+setHopQueue(enqueue);
 
 /**
  * Stop a bot's running turn. For a group chat, stop its members' turns for the group's messages
@@ -277,6 +285,7 @@ export function enqueueBotMessage(fromBotId: string, toBotId: string, text: stri
   // A siloed bot's message is delivered only if send_to_bot checked it against its allow-list.
   if (isSilo(fromBotId) && !takeCleared(fromBotId, toBotId, text)) {
     console.warn(`[silo] refused an unchecked message from ${fromBotId} to ${toBotId}`);
+    logActivity({ botId: fromBotId, chatId: fromBotId, tool: 'send_to_bot', title: `Message to ${getBotRow(toBotId)?.name ?? 'a bot'}`, outcome: 'refused', source: 'handoff', how: 'Walled bot', detail: 'Not checked against its allow-list' });
     return;
   }
   const from = getBotRow(fromBotId);
@@ -292,7 +301,28 @@ function deliverToOutside(botId: string, t: Trigger) {
     if (t.agent) r = { ok: false, why: 'A script cannot send to the Slack link as its owner.' };
     else r = sendOutside({ outsideId: botId, fromBotId: null, text: t.text });
   }
-  if (r && !r.ok) appendRow(botId, 'notice', { type: 'notice', text: `Not sent: ${r.why}`, tone: 'warn' });
+  if (r && !r.ok) {
+    appendRow(botId, 'notice', { type: 'notice', text: `Not sent: ${r.why}`, tone: 'warn' });
+    // The trail's row is the sender's: the bot that handed it on, or the person who typed it.
+    const fromBot = t.type === 'bot' ? t.fromBotId : null;
+    logActivity({ botId: fromBot ?? botId, chatId: fromBot ?? botId, tool: 'send_outside', title: `Message to ${getBotRow(botId)?.name ?? 'an outside member'}`, outcome: 'refused', source: 'handoff', how: 'Slack link', detail: r.why,
+      starter: fromBot ? { kind: 'handoff', id: fromBot, name: t.type === 'bot' ? t.fromName : null } : t.type === 'user' && t.agent ? { kind: 'script', name: t.agent } : { kind: 'person' } });
+  }
+}
+
+/** What started a turn, for the activity trail (activity.ts). */
+export function starterOf(t: Trigger): Starter {
+  switch (t.type) {
+    case 'user': return t.agent ? { kind: 'script', name: t.agent } : { kind: 'person' };
+    case 'routine': return { kind: 'routine', id: t.routineId, name: t.name };
+    case 'bot': return { kind: 'handoff', id: t.fromBotId, name: t.fromName };
+    case 'external': return { kind: 'handoff', id: t.fromId, name: t.fromName };
+    case 'system':
+      if (t.origin) return t.origin;
+      // A group turn with no hops is a person's message to the group; one with hops was another bot's.
+      if (t.room) return t.depth ? { kind: 'handoff', name: null } : { kind: 'person' };
+      return { kind: 'system' };
+  }
 }
 
 function triggerText(t: Trigger): string {
@@ -301,7 +331,8 @@ function triggerText(t: Trigger): string {
     case 'routine': return `[Routine "${t.name}" is running now. Do this:]\n${t.prompt}\n\n${t.quiet === false
       ? '[This routine is set to report every run: end with one short line on what you found, even when it is "nothing new".]'
       : '[This routine posts only when something is found. If there is nothing new for your owner, call stay_silent and write nothing else: no status lines, no notes to yourself. Anything you write in a run that ends silent is dropped.]'}`;
-    case 'bot': return `[Message from ${t.fromName}, another Bot on the team. Reply to them with send_to_bot if they asked you something. If the work needs your owner's approval or a decision, ask your owner directly in your reply here (or call the tool, so its approval card shows here); do not stay silent or leave the asking to ${t.fromName}.]\n${t.text}`;
+    case 'bot': if (t.hopId) return hopTriggerText(t.fromName, t.text, t.hopKind);
+      return `[Message from ${t.fromName}, another Bot on the team. Reply to them with send_to_bot if they asked you something. If the work needs your owner's approval or a decision, ask your owner directly in your reply here (or call the tool, so its approval card shows here); do not stay silent or leave the asking to ${t.fromName}.]\n${t.text}`;
     case 'system': return `[System notice] ${t.text}`;
     case 'external': {
       const answer = t.kind === 'A' || t.kind === 'FYI';
@@ -325,6 +356,8 @@ interface Turn {
   userId: string;
   /** How many bot-to-bot hops led here (send_to_bot stops a ping-pong at 3). */
   depth: number;
+  /** What started this turn (activity.ts): every action in it is written to the trail under this. */
+  starter: Starter;
   /** A tool ended the conversation for now (asked the user, stayed silent): drop any closing text. */
   silent: boolean;
   tools: ToolRef[];
@@ -337,8 +370,12 @@ interface Turn {
 }
 
 const turns = new Map<string, Turn>();
+// The activity trail asks which turn is running in a chat to name what started an action there.
+setStarterLookup((chatId) => turns.get(chatId)?.starter ?? null);
 
 export const turnDepth = (botId: string) => turns.get(botId)?.depth ?? 0;
+/** The group a running turn answers, if it is a member's turn for a group message. */
+export const turnRoom = (botId: string) => turns.get(botId)?.room;
 
 export function markSilent(botId: string) {
   const t = turns.get(botId);
@@ -411,7 +448,7 @@ function patchToolRow(botId: string, seq: number, patch: Partial<ToolCallBody>) 
 // ---------- approvals ----------
 
 /** Browser cards (browser-cards.ts): answered only in the chat, never "Always allow". */
-export const BROWSER_CARD_TOOLS = new Set(['secure_input', 'purchase', 'screen_help']);
+export const BROWSER_CARD_TOOLS = new Set(['secure_input', 'purchase', 'screen_help', 'saved_login']);
 
 export type ApprovalDecision = 'allow' | 'deny' | 'expired';
 
@@ -453,14 +490,27 @@ export async function requestApproval(
   if (meta) Object.assign(meta, { approvalId, digest });
   const browser = pol.browser;
   const posting = pol.posting;
+  // The kind of action (action-kinds.ts): the card says what it does, and a kind's card is what may make a
+  // standing answer for it. "Allow for this conversation" is offered wherever "Always allow" is, except on
+  // cards that have their own rules (mail, browser cards, posting plans, hand-offs).
+  const kind = mail ? 'send' : pol.kind;
+  const always = mail || browser || posting || pol.handoff ? null : alwaysAllowFor(asks);
+  const kindBits = kind ? { kind, kindName: KIND_NAME[kind], kindSays: KIND_SAYS[kind] } : {};
   const card = appendRow(botId, 'card', {
-    type: 'card', card: 'approval', approvalId, title: browser ? browser.title : posting ? posting.title : `Allow ${getBotRow(botId).name} to ${pol.title.split(': ')[1] ?? pol.title}?`,
+    type: 'card', card: 'approval', approvalId, title: pol.cardTitle ? pol.cardTitle : browser ? browser.title : posting ? posting.title : `Allow ${getBotRow(botId).name} to ${pol.title.split(': ')[1] ?? pol.title}?`,
     detail: mail ? '' : pol.detail ?? describeArgs(args, asks), tool: pol.key, tools: mail ? [pol.key] : asks, toolkit: pol.toolkit, toolkitName: tk?.name, logo: tk?.logo, args, digest, status: 'pending',
-    ...(mail ? { mail, title: `${getBotRow(botId).name} wants to send this email`, canAlways: false, lowRisk: false, risk: 'message' } : browser ? { canAlways: false, lowRisk: false, risk: browser.purchase ? 'money' : 'browser' } : posting ? { canAlways: true, lowRisk: false, risk: 'message', alwaysNote: 'This posts on your public accounts. With Always allow, later posting plans from this bot are approved without asking (still only the exact captions it lists, and never before you have pressed Approve once).' } : alwaysAllowFor(asks)),
+    ...(mail ? { mail, title: `${getBotRow(botId).name} wants to send this email`, canAlways: false, lowRisk: false, risk: 'message' } : browser ? { canAlways: false, lowRisk: false, risk: browser.purchase ? 'money' : 'browser' } : posting ? { canAlways: true, lowRisk: false, risk: 'message', alwaysNote: 'This posts on your public accounts. With Always allow, later posting plans from this bot are approved without asking (still only the exact captions it lists, and never before you have pressed Approve once).' } : pol.handoff ? { canAlways: false, lowRisk: false, risk: 'browser', handoff: true } : {
+      ...always,
+      // A kind of action warns in its own words, and is never answered from a notification.
+      ...(kind && always?.canAlways ? { lowRisk: false, alwaysNote: `${KIND_SAYS[kind]} With Always allow or Allow for this conversation, ${getBotRow(botId).name} won't ask again for this.` } : {}),
+      ...(always?.canAlways ? { canConversation: true } : {}),
+    }),
+    ...kindBits,
     ...(posting ? { postingPlan: posting.plan, detail: '' } : {}),
     ...(browser?.secret ? { secret: browser.secret } : {}),
     ...(browser?.purchase ? { purchase: browser.purchase } : {}),
     ...(browser?.screenHelp ? { screenHelp: browser.screenHelp } : {}),
+    ...(browser?.vault ? { vault: browser.vault } : {}),
     ...(pol.ruleLabel ? { ruleLabel: pol.ruleLabel } : {}),
   });
   // `tools` is what the card lists, and so all that "Always allow" on it may store a policy for.
@@ -582,9 +632,9 @@ function ruleLabelOnCard(botId: string, seq: number): string | undefined {
 }
 
 export function resolveApproval(
-  userId: string, approvalId: string, decisionIn: 'allow' | 'always' | 'deny', digest: string | undefined,
+  userId: string, approvalId: string, decisionIn: 'allow' | 'always' | 'conversation' | 'deny', digest: string | undefined,
   /** Who answered and from where, kept on an "Always allow" rule. */
-  who: { by: string; via: string; withSecret?: boolean; withPlan?: boolean },
+  who: { by: string; via: string; withSecret?: boolean; withPlan?: boolean; withLogin?: boolean },
 ): ApprovalReadback {
   let decision = decisionIn;
   const ap = db.prepare('SELECT a.*, b.user_id FROM approvals a JOIN bots b ON b.id=a.bot_id WHERE a.id=?').get(approvalId) as any;
@@ -596,12 +646,23 @@ export function resolveApproval(
   if (isMail && decision !== 'deny' && !['web', 'Windows app', 'phone app'].includes(who.via)) throw new ApprovalError('not_pending', 'Open the chat to read the email, then press Send there.', approvalReadback(approvalId));
   // A phone call likewise: only from its card in the chat, never from a notification, never "Always allow".
   if (ap.tool === 'place_call' && decision !== 'deny' && !['web', 'Windows app', 'phone app'].includes(who.via)) throw new ApprovalError('not_pending', 'Open the chat to read the call card, then press Allow there.', approvalReadback(approvalId));
-  if (ap.tool === 'place_call' && decision === 'always') decision = 'allow';
+  if (ap.tool === 'place_call' && (decision === 'always' || decision === 'conversation')) decision = 'allow';
+  // A hand-off (a password change on a website, browser-cards.ts): "I did it myself" or "Don't do it", only in the chat.
+  const card = getRow(ap.bot_id, ap.row_seq);
+  const cardBody = card && card.body.type === 'card' && card.body.card === 'approval' ? (card.body as { handoff?: boolean; canConversation?: boolean }) : undefined;
+  if (cardBody?.handoff && decision !== 'deny') {
+    if (!['web', 'Windows app', 'phone app'].includes(who.via)) throw new ApprovalError('not_pending', 'Open the chat and answer this card there.', approvalReadback(approvalId));
+    decision = 'allow';
+  }
+  // "Allow for this conversation" only where the card offered it (mail, calls, browser cards and plans never do).
+  if (decision === 'conversation' && !cardBody?.canConversation) decision = 'allow';
   // Browser cards (browser-cards.ts): only from the card in the chat, never "Always allow". A secure input's
   // value comes with its answer on its own route (routes.ts /approvals/:id/secret), never as a plain allow.
   if (BROWSER_CARD_TOOLS.has(ap.tool) && decision !== 'deny') {
     if (!['web', 'Windows app', 'phone app'].includes(who.via)) throw new ApprovalError('not_pending', 'Open the chat and answer this card there.', approvalReadback(approvalId));
     if (ap.tool === 'secure_input' && !who.withSecret) throw new ApprovalError('not_pending', 'Type the value into the card to fill it.', approvalReadback(approvalId));
+    // A saved login (vault.ts) is used only by its owner's press of Sign in (routes.ts /approvals/:id/login).
+    if (ap.tool === 'saved_login' && !who.withLogin) throw new ApprovalError('not_pending', 'Press Sign in on the card.', approvalReadback(approvalId));
     decision = 'allow';
   }
   // A posting plan (posting.ts): only from its card in the app, with the days the person left on.
@@ -609,7 +670,7 @@ export function resolveApproval(
     if (!['web', 'Windows app', 'phone app'].includes(who.via)) throw new ApprovalError('not_pending', 'Open the chat and answer the posting plan there.', approvalReadback(approvalId));
     if (!who.withPlan) throw new ApprovalError('not_pending', 'Choose the days on the card, then press Approve.', approvalReadback(approvalId));
   }
-  if (isMail && decision === 'always') decision = 'allow';
+  if (isMail && (decision === 'always' || decision === 'conversation')) decision = 'allow';
   if (isMail && decision !== 'deny' && isMail.incomplete) throw new ApprovalError('not_pending', isMail.incomplete, approvalReadback(approvalId));
   const waiter = waiters.get(approvalId);
   if (!waiter || ap.created_at + APPROVAL_WAIT_MS <= now()) {
@@ -620,12 +681,20 @@ export function resolveApproval(
   // none (a batch that could not be read) has nothing to remember, so it counts as allowed this once.
   let listed: string[] = [];
   try { listed = (JSON.parse(ap.tools ?? '[]') as unknown[]).filter((t): t is string => typeof t === 'string'); } catch { /* nothing listed */ }
-  const status = decision === 'deny' ? 'denied' : decision === 'always' && listed.length ? 'always' : 'allowed';
+  const status = decision === 'deny' ? 'denied' : decision === 'always' && listed.length ? 'always' : decision === 'conversation' && listed.length ? 'conversation' : 'allowed';
   db.prepare('UPDATE approvals SET status=?, resolved_at=?, answered_by=?, answered_via=? WHERE id=?').run(status, now(), who.by, who.via, approvalId);
   // The rule is for this bot only (its helpers run under its id, so they share it).
   if (status === 'always') {
+    // A card in a side chat is the same bot: its rule is stored on the bot, where every lookup reads it.
     createRules({
-      userId, botId: ap.bot_id, tools: listed, approvalId, createdBy: who.by, createdVia: who.via,
+      userId, botId: chatOwner(ap.bot_id), tools: listed, approvalId, createdBy: who.by, createdVia: who.via,
+      labelOf: (t) => ruleLabelOnCard(ap.bot_id, ap.row_seq) ?? (t.toLowerCase().startsWith('hermes__') ? hermesTitle(t.slice(8)) : humanizeSlug(t)),
+    });
+  }
+  // For this conversation: the card's chat (main or side chat) and its current conversation only.
+  if (status === 'conversation') {
+    createConversationAllows({
+      userId, chatId: ap.bot_id, botId: chatOwner(ap.bot_id), tools: listed, approvalId, createdBy: who.by, createdVia: who.via,
       labelOf: (t) => ruleLabelOnCard(ap.bot_id, ap.row_seq) ?? (t.toLowerCase().startsWith('hermes__') ? hermesTitle(t.slice(8)) : humanizeSlug(t)),
     });
   }
@@ -811,25 +880,35 @@ async function runTurn(botId: string, trigger: Trigger) {
   // A group turn the group's Stop dropped while it waited in the queue never starts.
   if (room && !roomTurnStarting(room.id, room.run, botId)) return;
   // A bot's chats share its engine: at most a few of them work at once (side-chats.ts), the rest wait.
-  const release = await takeRunSlot(botId);
-  try { await runTurnInner(botId, trigger); } finally { release(); if (room) roomTurnFinished(room.id, room.run, botId); }
+  // Stop reaches a turn that is still waiting for its place too (the controller is registered first).
+  const ctrl = new AbortController();
+  aborts.set(botId, ctrl);
+  let release: () => void;
+  try { release = await takeRunSlot(botId, ctrl.signal); } catch {
+    if (aborts.get(botId) === ctrl) aborts.delete(botId);
+    if (room) roomTurnFinished(room.id, room.run, botId);
+    return;
+  }
+  try { await runTurnInner(botId, trigger, ctrl); } finally { release(); if (aborts.get(botId) === ctrl) aborts.delete(botId); if (room) roomTurnFinished(room.id, room.run, botId); }
 }
 
-async function runTurnInner(botId: string, trigger: Trigger) {
+async function runTurnInner(botId: string, trigger: Trigger, ctrl: AbortController) {
   const room = trigger.type === 'system' ? trigger.room : undefined;
   const bot = getBotRow(botId);
   if (!bot || bot.kind === 'room') return;
   const userId: string = bot.user_id;
-  const ctrl = new AbortController();
+  if (ctrl.signal.aborted) return;
   aborts.set(botId, ctrl);
   const turn: Turn = {
     botId, userId, depth: trigger.type === 'bot' || trigger.type === 'external' ? trigger.depth : trigger.type === 'system' ? trigger.depth ?? 0 : 0, silent: false, tools: [], outcomes: new Map(),
-    steerable: trigger.type !== 'routine', room: room?.id,
+    steerable: trigger.type !== 'routine', room: room?.id, starter: starterOf(trigger),
   };
   turns.set(botId, turn);
   // Choice buttons the bot offers wait for the end of the turn, to sit under its reply (choices.ts).
   choiceTurnStart(botId);
   let lastText = '';
+  /** Everything the bot said this turn: for a handoff, that is the answer (bot-handoffs.ts). */
+  const said: string[] = [];
   // Files written in the workspace from here on are shown under the reply (see filesCard below).
   const turnStart = Date.now() - 1000;
   setLive(botId, { isRunning: true, activity: { kind: 'thinking', since: now() }, awaiting: null, startedAt: now(), caption: null, captionFull: null, steps: 0, model: null });
@@ -843,6 +922,7 @@ async function runTurnInner(botId: string, trigger: Trigger) {
   const held: string[] = [];
   const post = (t: string) => {
     lastText = t;
+    said.push(t);
     appendRow(botId, 'message', { type: 'message', role: 'assistant', text: t, streaming: false, ...(from ? { from } : {}) });
     db.prepare('UPDATE bots SET unread = unread + 1 WHERE id=?').run(botId);
   };
@@ -868,6 +948,7 @@ async function runTurnInner(botId: string, trigger: Trigger) {
     if (msgSeq === null) return;
     if (text.trim()) {
       lastText = text;
+      said.push(text.trim());
       flush(false);
       db.prepare('UPDATE bots SET unread = unread + 1 WHERE id=?').run(botId);
     } else updateRow(botId, msgSeq, { type: 'message', role: 'assistant', text: '', streaming: false });
@@ -916,6 +997,7 @@ async function runTurnInner(botId: string, trigger: Trigger) {
   const outputsSeen = new Set<string>();
   let steps = 0;
   let failed = false;
+  let routineSettled = false;
   let choice: Route | null = null;
   /** The model Hermes moved this turn to after the chosen one failed (its fallback chain), if it did. */
   let fellBackTo: { model: string; provider: string | null } | null = null;
@@ -949,11 +1031,15 @@ async function runTurnInner(botId: string, trigger: Trigger) {
     if (trigger.type === 'user') {
       const ownerName = (db.prepare('SELECT name FROM users WHERE id=?').get(userId) as any)?.name ?? 'the user';
       const fresh = rotateIfDue(bot, { type: 'user', text: trigger.text }, ownerName);
-      if (fresh) input = `${fresh.handoff}\n\n${input}`;
+      const again = fresh ? null : pendingHandoff(bot);
+      if (fresh || again) input = `${fresh?.handoff ?? again}\n\n${input}`;
     }
     // Emoji reactions since the last turn (reaction-feedback.ts): feedback only, never an approval.
     const feedback = takeFeedback(botId);
     if (feedback) input = `${feedback}\n\n${input}`;
+    // Answers to this bot's handoffs that landed since, and handoffs it still owes (bot-handoffs.ts).
+    const hops = hopNotes(botId);
+    if (hops) input = `${hops}\n\n${input}`;
     if (bot.handback_at) {
       input = `[Note: the user took control of your screen for a while and has just handed it back. Look at the screen before you rely on what was there.]\n\n${input}`;
       db.prepare('UPDATE bots SET handback_at=NULL WHERE id=?').run(botId);
@@ -990,6 +1076,7 @@ async function runTurnInner(botId: string, trigger: Trigger) {
       }),
     });
     if (!res.ok || !res.body) throw new Error(await failureText(res));
+    handoffDelivered(botId);
 
     for await (const ev of sseEvents(res.body)) {
       const d = ev.data;
@@ -1093,6 +1180,9 @@ async function runTurnInner(botId: string, trigger: Trigger) {
           const told = turn.outcomes.get(ref.seq);
           const guess = readOutcome(item);
           patchToolRow(botId, ref.seq, told?.status && told.status !== 'running' ? told : { status: guess.status, summary: told?.summary ?? guess.summary });
+          // A Hermes tool the gate let through: its trail row turns to failed if the result says so.
+          // The app's own tools write their full row in mcp.ts (they set `told`), so they are left alone here.
+          if (!told) noteResult(botId, ref.name, guess.status === 'error', guess.summary);
           if (!getLive(botId).awaiting) setLive(botId, { activity: { kind: 'thinking', since: now() } });
         }
       }
@@ -1103,16 +1193,31 @@ async function runTurnInner(botId: string, trigger: Trigger) {
     const stopped = ctrl.signal.aborted;
     closeMessage();
     const update = stopped && updating;
-    appendRow(botId, 'notice', {
+    // A failing routine says so once; while it keeps failing only its run line changes, and the tenth
+    // failure in a row switches it off (routines.ts, the fatigue rule).
+    const rf = routine && !stopped ? routineRunEnded(routine.routineId, false, failure) : null;
+    if (routine) routineSettled = true;
+    if (rf && !rf.post) {
+      const run = routine!.runSeq !== undefined ? getRow(botId, routine!.runSeq) : null;
+      if (run?.body.type === 'event') updateRow(botId, routine!.runSeq!, { ...run.body, text: `Routine failed again: ${routine!.name} (${rf.count} in a row)` });
+    } else appendRow(botId, 'notice', {
       type: 'notice',
       text: update ? `Interrupted by an update to the app${room ? ` (a reply to the group "${room.name}")` : ''}. Send your message again in a minute.`
         : stopped ? (room ? `Stopped (a reply to the group "${room.name}").` : 'Stopped.') : turnFailureText(e),
       tone: stopped && !update ? 'info' : 'error',
     });
+    if (rf?.turnedOff) {
+      appendRow(botId, 'notice', { type: 'notice', text: `Routine "${routine!.name}" was turned off after ${ROUTINE_FAIL_LIMIT} failures in a row. Turn it back on in Bot settings > Routines once it is fixed.`, tone: 'error' });
+      hub.emit(userId, { type: 'routines', botId } as any);
+    }
     if (!stopped) console.error('[agent]', botId, e);
   } finally {
     closeMessage();
     releaseHeld();
+    // A routine run that finished resets its failure count; one that was stopped counts for nothing.
+    if (routine && !routineSettled) {
+      try { routineRunEnded(routine.routineId, failed ? null : true); } catch (e) { console.warn('[routines] could not record the run', e); }
+    }
     // A turn the user stopped is not a failure of the model, so it does not make auto escalate.
     // The usage view counts the model that actually answered: after a fallback, that is the fallback.
     const ran = choice && fellBackTo ? { ...choice, model: fellBackTo.model, provider: fellBackTo.provider ?? choice.provider, reason: `${choice.reason}; fell back from ${choice.model ?? 'the default'}` } : choice;
@@ -1134,6 +1239,17 @@ async function runTurnInner(botId: string, trigger: Trigger) {
     } catch (e) { console.warn('[choices] could not post buttons', e); }
     if (aborts.get(botId) === ctrl) aborts.delete(botId);
     if (turns.get(botId) === turn) turns.delete(botId);
+    // A handoff's turn: its reply goes to the asking chat word for word, or the hop waits, retries or fails.
+    if (trigger.type === 'bot' && trigger.hopId) {
+      try {
+        hopTurnEnded(trigger.hopId, {
+          ok: !failed, stopped: ctrl.signal.aborted, updating: ctrl.signal.aborted && updating,
+          stayedSilent: turn.tools.some((t) => t.name === 'stay_silent'),
+          waitingOnOwner: turn.silent && !said.length,
+          text: turn.tools.some((t) => t.name === 'stay_silent') ? '' : said.join('\n\n'), failure,
+        });
+      } catch (e) { console.warn('[hops] could not finish a handoff', e); }
+    }
     // Steering messages the bot never reached (the reply ended first) become the next turn.
     try { steerLeftovers(botId); } catch (e) { console.warn('[steer] could not pass on unread notes', e); }
     clearTimeout(captionTimer);

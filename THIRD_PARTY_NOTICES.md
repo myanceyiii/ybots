@@ -82,3 +82,27 @@ streaming models are under the MIT License. Copyright (c) Moonshine AI / Useful 
 ## Simple Icons (approval card logos)
 
 The app logos on approval cards (`server/src/card-icon.ts`, copied to `mobile/src/cardIcon.ts`) are path data from [Simple Icons](https://simpleicons.org) 16.38.1, released under CC0-1.0 (public domain). The card glyphs in the same file come from Lucide (lucide-static 1.81.0, ISC, license above). Both are bundled; nothing is fetched at runtime. Brand names and logos belong to their owners and are shown only to identify the app a card is about. Regenerate with `scripts/icons/build-card-icons.mjs`.
+
+## A2UI
+
+Answer views can draw [A2UI](https://a2ui.org) 1.0 interfaces (`server/src/a2ui.ts`, copied to `mobile/src/a2ui.ts`).
+A2UI is Copyright Google LLC and contributors, licensed under the Apache License 2.0
+(https://www.apache.org/licenses/LICENSE-2.0). The engine here is a smaller re-implementation; its `${...}`
+expression syntax follows the A2UI web_core expression parser. `tests/fixtures/a2ui/*.json` are the A2UI v1.0
+Basic catalog examples, copied unchanged from the `@a2ui/web_core` 0.16.1 npm package (Apache-2.0). The A2UI icon
+drawings (`server/src/a2ui-icons.ts`) are Lucide paths (lucide-static 1.81.0, ISC, license above).
+
+## OpenBot (check-in offer card)
+
+The check-in offer card (`server/src/checkin-offer.ts`, `CheckInOffer` in `web/src/components/cards/ViewCard.tsx` and `mobile/src/components/ViewCard.tsx`) follows the design and wording of OpenBot's check-in offer (`shared/check-in-offer.ts` and `app/src/lib/copilot/check-in-offer-tool.tsx`, https://github.com/CopilotKit/OpenBot at f681239). No code is copied; the idea, the tool name and the card's text are adapted. OpenBot is under the MIT License, Copyright (c) 2026 CopilotKit.
+
+## OpenBot (Teach a bot recorder masking)
+
+`server/src/vendor/openbot/recorder-masking.ts` is copied unchanged from [CopilotKit/OpenBot](https://github.com/CopilotKit/OpenBot) at commit `f681239a0d8e92f990848427ccaa318ac5c1657b` (`shared/recorder-masking.ts`). The page script in `server/src/teach-page.ts` adapts `describeDemonstrationTarget` and `SENSITIVE_FIELD` from `shared/demonstration-rules.ts` at the same commit. Both are under the MIT License, Copyright (c) 2026 CopilotKit; the full text is in `server/src/vendor/openbot/LICENSE`.
+
+## Saved logins (design only)
+
+The saved-login vault (`server/src/vault.ts`) follows the design of Merit-Systems/OpenInstinct
+(github.com/Merit-Systems/OpenInstinct, MIT): the bot lists safe metadata with opaque handles and asks to
+fill by handle, the page origin comes from the browser, and values never enter the agent's context. No
+OpenInstinct code is copied. Encryption uses Node's built-in `crypto` (AES-256-GCM).

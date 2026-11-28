@@ -15,6 +15,7 @@ import { screenFailureText, screenRetryDelay } from '../screenRetry';
 import { botColor, color } from '../theme';
 import { runClip } from '../remoteClip';
 import { SCREEN_PAGE } from '../vnc/page.generated';
+import { useTeach } from './TeachReview';
 
 type Mode = 'watch' | 'control';
 type Conn = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
@@ -49,7 +50,7 @@ function actionColors(bot: Bot): { action: string; onAction: string } {
  * full screen and Hand back. Full screen hides the header and the system bars, and the view turns with the
  * phone, so an unfolded foldable or a phone on its side shows the desktop large.
  */
-export function Computer({ api, bot, onBack }: { api: Client; bot: Bot; onBack: () => void }) {
+export function Computer({ api, bot, onBack, onTeachReview }: { api: Client; bot: Bot; onBack: () => void; /** Teach a bot: open the review after Stop. */ onTeachReview?: () => void }) {
   const web = useRef<React.ComponentRef<typeof WebView>>(null);
   const link = useRef<ScreenLink | null>(null);
   const box = useRef<React.ComponentRef<typeof View>>(null);
@@ -74,6 +75,19 @@ export function Computer({ api, bot, onBack }: { api: Client; bot: Bot; onBack: 
   const [waking, setWaking] = useState(false);
   const [wakeError, setWakeError] = useState<string | null>(null);
   const [menu, setMenu] = useState(false);
+  // Teach a bot (server/src/teach.ts): Record what you do in the bot's browser while you drive; Stop opens the review.
+  const teach = useTeach(api, bot.id);
+  const [teachBusy, setTeachBusy] = useState(false);
+  const recording = teach.state?.recording?.status === 'recording';
+  const canTeach = !!onTeachReview && !!teach.state && !teach.state.blocked && !bot.outside;
+  const teachSteps = teach.state?.recording?.steps.length ?? 0;
+  const toggleRecord = async () => {
+    setTeachBusy(true);
+    try {
+      if (recording) { teach.setState(await api.teachStop(bot.id)); onTeachReview?.(); }
+      else teach.setState(await api.teachStart(bot.id));
+    } catch (e: any) { Alert.alert(recording ? 'Couldn’t stop recording' : 'Couldn’t start recording', e?.message ?? 'Try again.'); } finally { setTeachBusy(false); }
+  };
   const [kbPad, setKbPad] = useState(0);
   const [retrying, setRetrying] = useState(false);
   const connRef = useRef<Conn>('idle');
@@ -277,7 +291,14 @@ export function Computer({ api, bot, onBack }: { api: Client; bot: Bot; onBack: 
             </View>
           </View>
           <View style={{ flex: 1 }} />
-          <RoundButton icon="expand" label="Full screen" onPress={() => setFullscreen(true)} dark />
+          {canTeach && driving && phase === 'live' && (
+            <Pressable accessibilityRole="button" accessibilityLabel={recording ? `Stop recording (${teachSteps} steps)` : 'Record what you do'} onPress={toggleRecord} disabled={teachBusy} hitSlop={4}
+              style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 6, height: 44, paddingHorizontal: 14, borderRadius: 22, backgroundColor: recording ? '#D93025' : color.computerControl, opacity: teachBusy ? 0.5 : pressed ? 0.8 : 1 })}>
+              <Icon name={recording ? 'stop' : 'record'} size={16} color="#FFFFFF" />
+              <Text style={{ fontSize: 15, fontWeight: '600', color: '#FFFFFF' }}>{recording ? `Stop · ${teachSteps}` : 'Record'}</Text>
+            </Pressable>
+          )}
+          {!(canTeach && driving && phase === 'live') && <RoundButton icon="expand" label="Full screen" onPress={() => setFullscreen(true)} dark />}
           <RoundButton icon="more" label="More" onPress={() => setMenu(true)} dark />
         </Header>
       )}
@@ -340,6 +361,8 @@ export function Computer({ api, bot, onBack }: { api: Client; bot: Bot; onBack: 
 
       <Sheet visible={menu} onClose={() => setMenu(false)} title={`${bot.name}’s computer`}>
         <SheetRow icon="expand" title="Full screen" onPress={() => { setMenu(false); setFullscreen(true); }} />
+        {canTeach && driving && phase === 'live' && <SheetRow icon={recording ? 'stop' : 'record'} title={recording ? `Stop recording (${teachSteps} steps)` : 'Record what you do, to teach a skill'} onPress={() => { setMenu(false); void toggleRecord(); }} />}
+        {canTeach && !recording && teach.state?.recording && <SheetRow icon="sparkle" title="Review the last recording" onPress={() => { setMenu(false); onTeachReview?.(); }} />}
         {phase === 'live' && (driving
           ? <SheetRow icon="eye" title={`Hand back to ${bot.name}`} onPress={() => { setMenu(false); handBack(); }} />
           : <SheetRow icon="pointer" title="Take control" onPress={() => { setMenu(false); setMode('control'); }} />)}

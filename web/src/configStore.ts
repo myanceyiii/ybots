@@ -8,7 +8,7 @@ import { lsGet, lsSet } from './lib/storage';
 
 export type Theme = 'system' | 'light' | 'dark';
 export type BotSettingsTab = 'general' | 'members' | 'look' | 'skills' | 'memories' | 'routines' | 'helpers' | 'tools';
-export type AppSection = 'general' | 'notifications' | 'computer' | 'pcs' | 'permissions' | 'connections' | 'usage' | 'system' | 'account';
+export type AppSection = 'general' | 'notifications' | 'computer' | 'pcs' | 'permissions' | 'connections' | 'activity' | 'usage' | 'system' | 'logins' | 'account';
 /** The three pages Connections replaced; links that still name them open Connections. */
 type OldSection = 'apps' | 'plugins' | 'connectors';
 

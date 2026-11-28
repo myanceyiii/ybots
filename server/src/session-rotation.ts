@@ -166,6 +166,19 @@ export function buildHandoff(botId: string, generation: number, opts: { owner: s
 }
 
 /**
+ * A handoff not yet delivered to its new session (the first turn after the rotation failed or was stopped
+ * before the engine took it). The next turn on that same session sends it again (audit 2026-11-27).
+ */
+const undelivered = new Map<string, { generation: number; segment: number; handoff: string }>();
+export function pendingHandoff(bot: { id: string; generation: number }): string | null {
+  const u = undelivered.get(bot.id);
+  if (!u) return null;
+  if (u.generation !== bot.generation || u.segment !== segmentOf(bot.id, bot.generation)) { undelivered.delete(bot.id); return null; }
+  return u.handoff;
+}
+export const handoffDelivered = (botId: string) => { undelivered.delete(botId); };
+
+/**
  * Start the new session: bump the segment, put a notice in the chat and return the handoff to send
  * ahead of the owner's message. Returns null when this turn keeps the current session.
  */
@@ -179,6 +192,7 @@ export function rotateIfDue(bot: { id: string; generation: number; side_of?: str
   const bits = ['the last messages', plan.open?.question ? 'the open question' : '', plan.open?.cards.length ? `${plan.open.cards.length} waiting card${plan.open.cards.length === 1 ? '' : 's'}` : '',
     plan.open?.tasks.length ? `${plan.open.tasks.length} open task${plan.open.tasks.length === 1 ? '' : 's'}` : ''].filter(Boolean);
   const hasCheckpoint = handoff.includes('## Your latest checkpoint');
+  undelivered.set(bot.id, { generation: bot.generation, segment: next, handoff });
   appendRow(bot.id, 'notice', { type: 'notice', tone: 'info',
     text: `New session started, handoff loaded: ${hasCheckpoint ? 'the latest checkpoint, ' : ''}${bits.join(', ')}. ${bot.name} starts fresh after a quiet spell; this chat is unchanged.` });
   emitBot(bot.id);

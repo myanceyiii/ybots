@@ -163,8 +163,9 @@ export function EngineSettings({ bot }: { bot: Bot }) {
 
   const save = async () => {
     if (!changed || busy) return;
-    setBusy('save'); setNote(null);
+    // Checked before busy is set: returning after it would leave every button on this screen disabled.
     if (needsOptIn && !ack) return;
+    setBusy('save'); setNote(null);
     try {
       const r = await configApi.setEngine(botId, {
         ...(wantProvider ? { provider: wantProvider } : {}), ...(wantModel ? { model: wantModel } : {}),

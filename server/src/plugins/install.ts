@@ -30,6 +30,10 @@ const MAX_BYTES = 50 * 1024 * 1024;
 export function walk(dir: string): string[] {
   const out: string[] = [];
   let bytes = 0;
+  // The folder itself too: a tarball whose top-level package/ is a link would otherwise walk (and later
+  // install) whatever folder on this machine it points at.
+  const top = fs.lstatSync(dir);
+  if (top.isSymbolicLink() || !top.isDirectory()) throw new InstallError('The package folder is a link or not a folder; links are not allowed.');
   const go = (rel: string) => {
     for (const name of fs.readdirSync(path.join(dir, rel)).sort()) {
       const r = rel ? `${rel}/${name}` : name;
@@ -124,7 +128,9 @@ function unpack(tgz: string, into: string) {
   // GNU tar: refuses members outside the folder by default; never restores owners or set-id bits.
   execFileSync('tar', ['-xzf', tgz, '-C', into, '--no-same-owner', '--no-same-permissions'], { stdio: 'pipe' });
   const pkgDir = path.join(into, 'package');
-  if (!fs.existsSync(pkgDir)) throw new InstallError('The tarball has no package/ folder.');
+  let st: fs.Stats;
+  try { st = fs.lstatSync(pkgDir); } catch { throw new InstallError('The tarball has no package/ folder.'); }
+  if (st.isSymbolicLink() || !st.isDirectory()) throw new InstallError('The tarball\'s package/ is a link or not a folder; links are not allowed.');
   return pkgDir;
 }
 

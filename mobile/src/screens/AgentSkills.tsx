@@ -5,6 +5,7 @@ import type { AgentSkill, AgentSkillDetail, AgentSkillList, AgentSkillSource, Bo
 import { Chip, Notice, PillButton } from '../components/ui';
 import { color, type } from '../theme';
 import { toast } from '../toast';
+import { useTeach } from './TeachReview';
 
 /**
  * Bot settings → Skills on the phone, the same as the web's Skills tab (web/src/components/config/SkillsTab.tsx):
@@ -20,8 +21,10 @@ const COLLAPSE_OVER = 40;
 const PAGE = 40;
 const input = () => ({ borderRadius: 18, backgroundColor: color.surface, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16, color: color.ink } as const);
 
-export function SkillsScreen({ api, bot, appSkills, onAppChange, fallback }: {
+export function SkillsScreen({ api, bot, appSkills, onAppChange, fallback, onTeach }: {
   api: Client; bot: Bot; appSkills: Skill[] | undefined; onAppChange: () => void; fallback: (notice?: string) => React.ReactNode;
+  /** Teach a bot by showing it: open its screen to record (false) or the review (true). */
+  onTeach?: (review: boolean) => void;
 }) {
   const [list, setList] = useState<AgentSkillList | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +35,24 @@ export function SkillsScreen({ api, bot, appSkills, onAppChange, fallback }: {
   useEffect(() => { setList(null); void load(); }, [load]);
 
   if (list && !list.available) return <>{fallback(list.reason)}</>;
-  return <AgentSkillsList api={api} bot={bot} list={list} error={error} reload={load} appSkills={appSkills} onAppChange={onAppChange} />;
+  return <>{onTeach && <TeachRow api={api} bot={bot} onTeach={onTeach} />}<AgentSkillsList api={api} bot={bot} list={list} error={error} reload={load} appSkills={appSkills} onAppChange={onAppChange} /></>;
+}
+
+/** Teach by showing (server/src/teach.ts), as on the web's Skills tab: open the screen to record, or review a recording that waits. */
+function TeachRow({ api, bot, onTeach }: { api: Client; bot: Bot; onTeach: (review: boolean) => void }) {
+  const { state } = useTeach(api, bot.id);
+  if (!state || state.blocked) return null;
+  const rec = state.recording;
+  const waiting = !!rec && rec.status !== 'recording';
+  return (
+    <View style={{ backgroundColor: color.fill, borderRadius: 18, padding: 14, gap: 10, marginBottom: 14 }}>
+      <Text style={type.name}>{waiting ? 'A recording is waiting for review' : rec ? 'Recording now' : 'Teach by showing'}</Text>
+      <Text style={type.caption}>{waiting
+        ? `${bot.name} ${rec.status === 'drafting' ? 'is writing it up as a skill.' : 'wrote it up as a skill. Check it, then save it.'}`
+        : `Take control of ${bot.name}’s screen, tap Record, do the task once in its browser and tap Stop. ${bot.name} writes it up as a skill for you to check.`}</Text>
+      <PillButton title={waiting ? 'Review' : rec ? 'Open screen' : 'Show it'} kind="secondary" icon={waiting ? undefined : 'record'} onPress={() => onTeach(waiting)} />
+    </View>
+  );
 }
 
 function AgentSkillsList({ api, bot, list, error, reload, appSkills, onAppChange }: {

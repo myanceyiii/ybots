@@ -2,7 +2,7 @@
 // key presses or a hang-up. Run after `npm run build -w server`.
 import assert from 'node:assert/strict';
 import { parseReply, localMessages, turnProblem } from '../server/dist/calls-reply.js';
-import { usNumber, callScript, callResultText, allPartyState } from '../server/dist/calls-place.js';
+import { usNumber, callScript, callResultText, allPartyState, readableCallError } from '../server/dist/calls-place.js';
 
 let failures = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failures++; console.log(`FAIL ${name}\n     ${e.message}`); } };
@@ -69,6 +69,25 @@ test('place_call: all-party states ask before recording', () => {
 test('place_call: the result says when nobody answered', () => {
   assert.match(callResultText({ id: 'x', status: 'ended', to: '', transcript: [], notes: [] }, 'Romano'), /Nobody answered/);
   assert.match(callResultText({ id: 'x', status: 'ended', to: '', transcript: [{ who: 'them', text: 'Hi' }], notes: ['open till 9'], answered: 10, ended: 75 }, 'Romano'), /1 min 5 s[\s\S]*open till 9[\s\S]*Them: Hi/);
+});
+
+// Call errors read as one plain sentence, never Telnyx's raw JSON (2026-11-27: trial account, error 10010).
+const cutTrial = 'Telnyx answered 403: {\n  "data": {\n    "call_control_id": "v3:abc"\n  },\n  "errors": [\n    {\n      "code": "10010",\n      "title": null,\n      "detail": "Can not make calls to non-verified numbers at this account level D60. The user portal level does';
+test('trial-level refusal (cut mid-JSON) becomes the fix in words', () => {
+  const t = readableCallError(cutTrial);
+  assert.match(t, /trial level/); assert.match(t, /Upgrade it to Paid/);
+  assert.ok(!t.includes('{') && !t.includes('call_control_id')); assert.ok(t.length <= 200);
+});
+test('trial-level refusal in the new compact form', () => {
+  assert.match(readableCallError('Telnyx answered 403: {"errors": [{"code": "10010", "title": null, "detail": "Can not make calls to non-verified numbers at this account level D60."}]}'), /trial level/);
+});
+test('an unknown Telnyx error keeps its reason and code, no JSON', () => {
+  const t = readableCallError('Telnyx answered 422: {"errors": [{"code": "90000", "title": "Invalid value", "detail": "to is not valid"}]}');
+  assert.equal(t, 'the phone company (Telnyx) refused the call: to is not valid (code 90000)');
+});
+test('a plain error passes through', () => { assert.equal(readableCallError('A call is already on.'), 'A call is already on.'); });
+test('a failed call record is told in words', () => {
+  assert.match(callResultText({ status: 'failed', error: cutTrial, transcript: [] }, 'Hertz'), /did not go through: the phone account \(Telnyx\) is still on its trial level/);
 });
 
 if (failures) { console.log(`${failures} failed`); process.exit(1); }

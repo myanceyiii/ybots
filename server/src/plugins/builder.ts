@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -203,9 +204,10 @@ function commitDraft(repo: string, message: string) {
   }
 }
 
+// Each run gets its own digest, so two drafts checked at once never share a sandbox container name.
 /** Start the draft in the sandbox (never with network) and list its tools. */
 async function dryRun(dir: string, manifest: any): Promise<string[]> {
-  const row: PluginRow = { id: 'draft', version: '0.0.0', digest: 'dryrun00', name: 'draft', source: 'draft', manifest: { ...manifest, network: [] }, dir, status: 'installed', installedAt: 0, installedBy: '' };
+  const row: PluginRow = { id: 'draft', version: '0.0.0', digest: `dry${crypto.randomBytes(3).toString('hex')}`, name: 'draft', source: 'draft', manifest: { ...manifest, network: [] }, dir, status: 'installed', installedAt: 0, installedBy: '' };
   const cfg = launchConfig(row);
   const client = new Client({ name: 'cleft-bot-check', version: '1.0.0' });
   const transport = new StdioClientTransport({ command: cfg.command!, args: cfg.args, cwd: cfg.cwd, env: { PATH: process.env.PATH ?? '/usr/bin:/bin' }, stderr: 'ignore' });
@@ -221,7 +223,7 @@ async function dryRun(dir: string, manifest: any): Promise<string[]> {
 
 function runTests(dir: string, manifest: any): Check {
   if (!fs.existsSync(path.join(dir, 'test.mjs'))) return { name: 'Its tests', ok: true, detail: 'No test.mjs; nothing to run.' };
-  const row: PluginRow = { id: 'draft', version: '0.0.0', digest: 'testrun0', name: 'draft', source: 'draft', manifest: { ...manifest, entry: 'test.mjs', network: [] }, dir, status: 'installed', installedAt: 0, installedBy: '' };
+  const row: PluginRow = { id: 'draft', version: '0.0.0', digest: `tst${crypto.randomBytes(3).toString('hex')}`, name: 'draft', source: 'draft', manifest: { ...manifest, entry: 'test.mjs', network: [] }, dir, status: 'installed', installedAt: 0, installedBy: '' };
   const cfg = launchConfig(row);
   try {
     execFileSync(cfg.command!, cfg.args ?? [], { cwd: cfg.cwd, env: { PATH: process.env.PATH ?? '/usr/bin:/bin' }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 });
@@ -259,7 +261,8 @@ export async function submitDraft(userId: string, botId: string, args: any): Pro
     const declared = manifest.network ?? [];
     const extra = declared.filter((h: string) => !plan.network.includes(h));
     if (extra.length) checks.push({ name: 'Network', ok: false, detail: `It asks for sites the plan did not name: ${extra.join(', ')}.` });
-    else checks.push({ name: 'Network', ok: true, detail: declared.length ? `Only ${declared.join(', ')}.` : 'None.' });
+    // The container gets ordinary network access when any site is named: the list is what it says it uses, not a filter.
+    else checks.push({ name: 'Network', ok: true, detail: declared.length ? `Says it uses ${declared.join(', ')}. It gets network access (other sites are not blocked).` : 'None.' });
   } catch (e) {
     checks.push({ name: 'The package', ok: false, detail: e instanceof InstallError ? e.message : String((e as Error).message) });
   }

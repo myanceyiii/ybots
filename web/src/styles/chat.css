@@ -338,6 +338,9 @@ a.sender-label__via:hover { text-decoration: underline; }
 .bubble__steer::before { content: "\21AA\FE0E  "; }
 .bubble__steer { color: var(--color-text-secondary); font-weight: 500; }
 .bubble__steer.is-pending { color: var(--color-text-tertiary); font-style: italic; }
+/* A bot's answer passed on word for word (server/src/bot-handoffs.ts). */
+.bubble__handoff { color: var(--color-text-secondary); font-weight: 500; }
+.bubble__handoff::before { content: "\21A9\FE0E  "; }
 .bubble-wrap.is-edited .bubble { opacity: 0.55; }
 .bubble-wrap.is-editing .bubble { box-shadow: 0 0 0 2px var(--color-ink); }
 

@@ -42,10 +42,13 @@ function write(o: AppOAuth, t: TokenFile) {
 
 const inflight = new Map<string, Promise<string>>();
 
-async function refresh(o: AppOAuth, fetchImpl: typeof fetch = fetch): Promise<string> {
+async function refresh(o: AppOAuth, fetchImpl: typeof fetch = fetch, used?: string): Promise<string> {
   const key = tokenPath(o);
   const running = inflight.get(key);
   if (running) return running;
+  // A 401 on a token another request has already replaced: use the new one instead of refreshing again
+  // (a server that rotates refresh tokens may treat a second use of the old one as theft).
+  if (used !== undefined) { const cur = read(o); if (cur.access_token && cur.access_token !== used) return cur.access_token; }
   const job = (async () => {
     const cur = read(o);
     const res = await fetchImpl(o.tokenUrl, {
@@ -79,9 +82,10 @@ export function oauthFetch(o: AppOAuth, fetchImpl: typeof fetch = fetch): typeof
       h.set('Authorization', `Bearer ${token}`);
       return fetchImpl(input, { ...init, headers: h });
     };
-    const res = await send(await accessToken(o, fetchImpl));
+    const token = await accessToken(o, fetchImpl);
+    const res = await send(token);
     if (res.status !== 401) return res;
-    return send(await refresh(o, fetchImpl));
+    return send(await refresh(o, fetchImpl, token));
   }) as typeof fetch;
 }
 

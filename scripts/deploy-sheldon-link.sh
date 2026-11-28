@@ -7,6 +7,10 @@
 set -euo pipefail
 REPO=${1:?repo dir}; COMMIT=${2:?commit}; SHELDON=${3:?Slack member id}; CHANNEL=${4:?channel id}; SVC=${5:-bot-hq-local}; CALL_URL=${6:-}
 OWNER_NAME=${OWNER_NAME:?set OWNER_NAME to the first name Sheldon uses for the owner}
+# These go into one line of .env as JSON: Slack ids are letters and digits, the name is plain words.
+[[ "$SHELDON" =~ ^[UW][A-Z0-9]{4,20}$ ]] || { echo "Slack member id looks wrong (U… or W…)"; exit 1; }
+[[ "$CHANNEL" =~ ^[CDG][A-Z0-9]{4,20}$ ]] || { echo "channel id looks wrong (C…, D… or G…)"; exit 1; }
+[[ "$OWNER_NAME" =~ ^[A-Za-z][A-Za-z\ .\'-]{0,40}$ ]] || { echo "OWNER_NAME must be a plain first name"; exit 1; }
 [[ -z "$CALL_URL" || "$CALL_URL" =~ ^https://chatgpt\.com/[A-Za-z0-9/._~-]*$ ]] || { echo "call link must be a plain https://chatgpt.com/ address"; exit 1; }
 CALL_JSON=${CALL_URL:+,\"callUrl\":\"$CALL_URL\"}
 TOK=/etc/cleft-bot/slack
