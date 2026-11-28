@@ -1,7 +1,8 @@
 import { db, now } from '../db.js';
 import { newId } from '../lib/ids.js';
 import './store.js';
-import { allAppConfigs, appConfig, listAppTools, type AppConfig, type AppTool } from '../local-apps.js';
+import { allAppConfigs, appConfig, appInfo, listAppTools, type AppConfig, type AppTool } from '../local-apps.js';
+import { logActivity } from '../activity.js';
 
 /**
  * Which bot has which plugin on.
@@ -82,6 +83,11 @@ export async function toolsForBot(botId: string): Promise<AppTool[]> {
 export function audit(userId: string | null, action: string, pluginId: string, botId: string | null, detail?: unknown) {
   db.prepare('INSERT INTO plugin_audit(id,at,user_id,action,plugin_id,bot_id,detail) VALUES (?,?,?,?,?,?,?)')
     .run(newId('pau'), now(), userId, action, pluginId, botId, detail === undefined ? null : JSON.stringify(detail));
+  // The activity trail (activity.ts) shows a person's change to a plugin or connection too. A bot's own
+  // change (`admin:…`) is already a row from its tool call.
+  if (userId && !action.startsWith('admin:')) {
+    logActivity({ userId, botId, tool: `plugin.${action}`, title: `${appInfo(pluginId)?.name ?? pluginId}: ${action.replace(/^person:/, '').replace(/[-_:.]/g, ' ')}`, outcome: 'allowed', source: action.startsWith('connector') || action.startsWith('person:') || action === 'reconnect' || action === 'tool-rule' ? 'connection' : 'plugin', starter: { kind: 'person' }, looks: false });
+  }
 }
 
 export class PluginError extends Error {

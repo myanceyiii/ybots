@@ -19,6 +19,8 @@
 # the app at it. Re-running the script upgrades the app and keeps .env, the database and the bots' files.
 # INSTALL.md walks through every step; llms-install.md is the same for a coding agent.
 set -euo pipefail
+# Logs go in a private folder of this run's own (it is printed if a step fails).
+LOGS="$(mktemp -d /tmp/ybots-setup.XXXXXX)"; chmod 700 "$LOGS"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${PORT:-8787}"
 PUBLIC_URL="${PUBLIC_URL:-http://localhost:$PORT}"
@@ -46,9 +48,13 @@ fi
 if [ "${SKIP_CHROME:-0}" != 1 ] && ! command -v google-chrome >/dev/null && ! command -v chromium >/dev/null; then
   arch="$(dpkg --print-architecture)"
   if [ "$arch" = amd64 ]; then
-    if curl -fsSL -o /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb; then
-      apt-get install -y -qq /tmp/chrome.deb >/dev/null && rm -f /tmp/chrome.deb
+    # A private folder of its own, not a fixed /tmp name another account on this machine could plant first.
+    dl="$(mktemp -d)"; chmod 700 "$dl"
+    if curl -fsSL -o "$dl/chrome.deb" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb; then
+      apt-get install -y -qq "$dl/chrome.deb" >/dev/null || true
+      rm -rf "$dl"
     else
+      rm -rf "$dl"
       echo "note: could not download Google Chrome; the bots need a Chrome or Chromium to browse. Install one and run this again."
     fi
   else
@@ -74,12 +80,12 @@ HERMES_BIN_PATH="$(command -v hermes || true)"
 if [ "${SETUP_HERMES:-0}" = 1 ]; then
   if [ -z "$HERMES_BIN_PATH" ]; then
     HERMES_INSTALL_URL="${HERMES_INSTALL_URL:-https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh}"
-    echo "installing Hermes Agent from $HERMES_INSTALL_URL (log: /tmp/ybots-hermes-install.log)"
-    curl -fsSL "$HERMES_INSTALL_URL" | HERMES_HOME="$HERMES_HOME_DIR" bash -s -- --non-interactive >/tmp/ybots-hermes-install.log 2>&1 \
-      || { tail -20 /tmp/ybots-hermes-install.log; echo "Hermes did not install; see the log above"; exit 1; }
+    echo "installing Hermes Agent from $HERMES_INSTALL_URL (log: $LOGS/hermes-install.log)"
+    curl -fsSL "$HERMES_INSTALL_URL" | HERMES_HOME="$HERMES_HOME_DIR" bash -s -- --non-interactive >$LOGS/hermes-install.log 2>&1 \
+      || { tail -20 $LOGS/hermes-install.log; echo "Hermes did not install; see the log above"; exit 1; }
     HERMES_BIN_PATH="$(command -v hermes || true)"
     [ -z "$HERMES_BIN_PATH" ] && [ -x "$HOME/.local/bin/hermes" ] && HERMES_BIN_PATH="$HOME/.local/bin/hermes"
-    [ -n "$HERMES_BIN_PATH" ] || { echo "Hermes installed but no hermes command was found; see /tmp/ybots-hermes-install.log"; exit 1; }
+    [ -n "$HERMES_BIN_PATH" ] || { echo "Hermes installed but no hermes command was found; see $LOGS/hermes-install.log"; exit 1; }
   fi
   "$HERMES_BIN_PATH" --version 2>/dev/null | head -1 || true
   # The API server the app talks to: loopback only, with a key of its own. Other lines are kept.
@@ -117,8 +123,8 @@ fi
 log "4/7 Build the app"
 cd "$ROOT"
 # Node's own headers let the SQLite module build without downloading them.
-npm_config_nodedir="$(dirname "$(dirname "$NODE_BIN")")" npm ci --no-audit --no-fund >/tmp/cleft-bot-npm.log 2>&1 || { tail -20 /tmp/cleft-bot-npm.log; exit 1; }
-npm run build >/tmp/cleft-bot-build.log 2>&1 || { tail -20 /tmp/cleft-bot-build.log; exit 1; }
+npm_config_nodedir="$(dirname "$(dirname "$NODE_BIN")")" npm ci --no-audit --no-fund >$LOGS/npm.log 2>&1 || { tail -20 $LOGS/npm.log; exit 1; }
+npm run build >$LOGS/build.log 2>&1 || { tail -20 $LOGS/build.log; exit 1; }
 [ -f apps.json ] || { cp apps.example.json apps.json; echo "made apps.json from apps.example.json: edit it for your apps (docs/local-apps.md)"; }
 
 log "5/7 Settings (.env is written once and kept on later runs)"

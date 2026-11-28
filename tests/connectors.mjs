@@ -234,6 +234,26 @@ await test('connect by address: a key stays in its own file and never in the lis
   await assert.rejects(() => cu.deleteCustom('u_owner', 'actual-budget'), /connected in the app/);
 });
 
+await test('sign-in metadata from a remote server cannot point at internal addresses or javascript: (audit 2026-11-27)', async () => {
+  const cu = await import('../server/dist/connectors-custom.js');
+  const json = (o) => new Response(JSON.stringify(o), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const lookup = async (h) => (h === 'evil.example' ? ['203.0.113.7'] : h === 'inside.example' ? ['10.0.0.5'] : ['203.0.113.9']);
+  const fake = (meta, prm = { authorization_servers: ['https://evil.example'] }) => async (u) => {
+    const url = String(u);
+    if (url.includes('oauth-protected-resource')) return json(prm);
+    if (url.includes('oauth-authorization-server')) return json(meta);
+    return new Response('', { status: 404 });
+  };
+  const ok = { authorization_endpoint: 'https://evil.example/authorize', token_endpoint: 'https://evil.example/token', registration_endpoint: 'https://evil.example/register' };
+  const remote = new URL('https://evil.example/mcp');
+  assert.equal((await cu.discover(remote, fake(ok), lookup)).meta.token_endpoint, 'https://evil.example/token');
+  await assert.rejects(() => cu.discover(remote, fake({ ...ok, authorization_endpoint: 'javascript:alert(1)' }), lookup), /not an https address/);
+  await assert.rejects(() => cu.discover(remote, fake({ ...ok, token_endpoint: 'http://169.254.169.254/latest' }), lookup), /only https/);
+  await assert.rejects(() => cu.discover(remote, fake({ ...ok, token_endpoint: 'https://127.0.0.1:8787/x' }), lookup), /internal address/);
+  await assert.rejects(() => cu.discover(remote, fake({ ...ok, registration_endpoint: 'https://inside.example/r' }), lookup), /internal address/);
+  await assert.rejects(() => cu.discover(remote, fake(ok, { authorization_servers: ['https://[::1]:9'] }), lookup), /internal address/);
+});
+
 await test('connect by address with sign-in: discovery, registration, PKCE, callback', async () => {
   const cu = await import('../server/dist/connectors-custom.js');
   const real = globalThis.fetch;

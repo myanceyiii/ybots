@@ -7,6 +7,7 @@ deploy/backup/
 scripts/release/
 scripts/release-windows.sh
 scripts/maintainer/
+scripts/public/release.sh
 docs/backup.md
 docs/howard-maintainer.md
 docs/cluster-mcp.md

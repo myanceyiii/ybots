@@ -65,6 +65,6 @@ accountExportApi.get('/export/account', (c) => {
   lastAt = Date.now();
   const scope = c.get('scope');
   const data = accountExport(user, displayName(user, currentSession(c)?.person ?? null) || 'You', (id) => inScope(scope, id));
-  console.log(`[export] ${user.email} downloaded the account: ${data.counts.bots} bot(s), ${data.counts.conversations} conversation(s), ${data.counts.messages} message(s)`);
+  console.log(`[export] account ${user.id} downloaded the account: ${data.counts.bots} bot(s), ${data.counts.conversations} conversation(s), ${data.counts.messages} message(s)`);
   return c.json(data, 200, { 'Content-Disposition': `attachment; filename="ybots-${data.exportedAt.slice(0, 10)}.json"`, 'Cache-Control': 'no-store' });
 });

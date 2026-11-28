@@ -42,7 +42,7 @@ function RoutineRow({ r }: { r: Routine }) {
       <span className="panel-row__icon"><Icon name="clock" opacity={0.52} /></span>
       <span className="panel-row__text">
         <span className="panel-row__title">{r.name}</span>
-        <span className="panel-row__sub">{enabled ? r.description || r.schedule : 'Paused'}</span>
+        <span className={`panel-row__sub${!enabled && r.autoOffAt ? ' panel-row__sub--warn' : ''}`}>{enabled ? r.description || r.schedule : r.autoOffAt ? 'Turned off after repeated failures' : 'Paused'}</span>
       </span>
       <Toggle on={enabled} onChange={toggle} label={`${r.name} ${enabled ? 'on' : 'off'}`} />
     </div>

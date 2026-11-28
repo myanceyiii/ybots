@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { db, now } from './db.js';
 import { newId } from './lib/ids.js';
-import { appsStatus, invalidateApps, registerAppSource, type AppConfig } from './local-apps.js';
+import { appsStatus, invalidateApps, registerAppSource, wildMatch, type AppConfig } from './local-apps.js';
 import { isOwner } from './plugins/owner.js';
 import { allowedFor, audit, pluginOverview } from './plugins/registry.js';
 
@@ -225,7 +225,7 @@ export function parseScan(text: string): { items: ScanItem[]; hostsDone: Set<str
   return { items, hostsDone };
 }
 
-const wild = (p: string, s: string) => new RegExp(`^${p.split('*').map((x) => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 'i').test(s);
+const wild = (p: string, s: string) => wildMatch(p, s);
 const itemKey = (i: ScanItem) => `${i.kind === 'userunit' ? 'unit' : i.kind}:${i.kind === 'userunit' ? i.name.split(':').slice(1).join(':') : i.name}`;
 
 /** Fold one scan into the table. Returns counts. `at` is the scan time. */

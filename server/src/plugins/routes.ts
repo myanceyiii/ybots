@@ -46,10 +46,11 @@ pluginsApi.get('/', async (c) => {
       const i = installed.get(p.id);
       return {
         ...p,
-        status: s?.status ?? 'stopped', error: s?.error, tools: s?.tools ?? 0, readOnly: s?.readOnly ?? false, reads: s?.reads ?? 0, blocked: s?.blocked ?? 0, version: s?.version, digest: s?.digest,
-        network: i?.manifest.network ?? [], description: s?.description,
-        settings: i?.manifest.settings ?? [], values: i ? publicValues(i.manifest.settings ?? [], pluginSettings(i.id)) : {},
-        history: i ? pluginHistory(p.id).map((h) => ({ version: h.version, digest: h.digest, status: h.status, installedAt: h.installedAt })) : [],
+        status: s?.status ?? 'stopped', error: owner ? s?.error : undefined, tools: s?.tools ?? 0, readOnly: s?.readOnly ?? false, reads: s?.reads ?? 0, blocked: s?.blocked ?? 0, version: s?.version, digest: s?.digest,
+        network: owner ? i?.manifest.network ?? [] : [], description: s?.description,
+        // Settings, their values and the version history are the owner's to manage (as in connections.ts).
+        settings: owner ? i?.manifest.settings ?? [] : [], values: owner && i ? publicValues(i.manifest.settings ?? [], pluginSettings(i.id)) : {},
+        history: owner && i ? pluginHistory(p.id).map((h) => ({ version: h.version, digest: h.digest, status: h.status, installedAt: h.installedAt })) : [],
       };
     }),
     pending: pendingChanges(u.id),

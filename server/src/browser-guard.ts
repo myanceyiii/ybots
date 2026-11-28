@@ -3,6 +3,9 @@ import WebSocket from 'ws';
 import { db } from './db.js';
 import { cdpUrlFor } from './computer.js';
 import { GUARD_BINDING, GUARD_SOURCE, GUARD_WORLD } from './browser-guard-page.js';
+import { browserKindKey, KIND_NAME, parseBrowserKindKey, siteOf, type ActionKind } from './action-kinds.js';
+import { noteRuleUse } from './allow-rules.js';
+import { conversationKindKeys, standingAllow } from './conversation-allows.js';
 
 /**
  * The browser guard (docs/browser-cards.md): a DevTools connection from this server to each working bot's
@@ -57,7 +60,7 @@ class Cdp {
   close() { try { this.ws.close(); } catch { /* gone */ } }
 }
 
-export interface GuardNote { at: number; kind: 'held' | 'changed' | 'passed' | 'captcha' | 'pub_held' | 'pub_dry' | 'published'; label?: string; origin: string; platform?: string; preview?: string; h?: string }
+export interface GuardNote { at: number; kind: 'held' | 'changed' | 'passed' | 'captcha' | 'pub_held' | 'pub_dry' | 'published' | 'kind_held' | 'kind_passed'; label?: string; origin: string; platform?: string; preview?: string; h?: string; action?: ActionKind; site?: string; via?: string }
 
 /**
  * Publish hold state for a bot (posting.ts owns it): whether the hold is on, whether a dry run is running,
@@ -68,10 +71,22 @@ let publishStateOf: (botId: string) => PublishState = () => ({ on: false, dry: f
 let onPublishEvent: (botId: string, note: GuardNote) => void = () => undefined;
 export function setPublishHooks(state: (botId: string) => PublishState, onEvent: (botId: string, note: GuardNote) => void) { publishStateOf = state; onPublishEvent = onEvent; }
 
+/**
+ * Other features that put a script of their own into a bot's pages (teach.ts, while recording) register here:
+ * an attach hook runs for every new page and frame session, and a binding hook hears that feature's binding.
+ */
+type Send = (method: string, params?: Json) => Promise<Json>;
+const attachHooks: ((botId: string, session: string, send: Send) => Promise<void>)[] = [];
+const bindingHooks = new Map<string, (botId: string, payload: string, session: string) => void>();
+export function onGuardAttach(h: (botId: string, session: string, send: Send) => Promise<void>) { attachHooks.push(h); }
+export function onGuardBinding(name: string, h: (botId: string, payload: string, session: string) => void) { bindingHooks.set(name, h); }
+
 class Watch {
   sessions = new Map<string, Sess>();
   contexts = new Map<string, Ctx>(); // key `${session}:${id}`
   notes: GuardNote[] = [];
+  /** The kinds state last sent into the pages (setKinds), sent again into every new page and frame. */
+  kindState = '';
   constructor(public botId: string, public cdp: Cdp) {}
 
   start = async () => {
@@ -85,10 +100,12 @@ class Watch {
           const ctx = { id: c.id, session, frameId: c.auxData?.frameId ?? '', origin: c.origin ?? '' };
           this.contexts.set(`${session}:${c.id}`, ctx);
           void this.pushPublish(ctx);
+          void this.pushKinds(ctx);
         }
       } else if (method === 'Runtime.executionContextDestroyed') this.contexts.delete(`${session}:${p.executionContextId}`);
       else if (method === 'Runtime.executionContextsCleared') { for (const k of [...this.contexts.keys()]) if (k.startsWith(`${session}:`)) this.contexts.delete(k); }
       else if (method === 'Runtime.bindingCalled' && p.name === GUARD_BINDING) this.event(p.payload);
+      else if (method === 'Runtime.bindingCalled' && bindingHooks.has(p.name)) { try { bindingHooks.get(p.name)!(this.botId, String(p.payload ?? ''), session); } catch { /* the hook logs its own problems */ } }
     });
     await this.cdp.send('Target.setDiscoverTargets', { discover: true });
     await this.cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true, filter: [{ type: 'page', exclude: false }, { type: 'iframe', exclude: false }, { exclude: true }] });
@@ -112,6 +129,8 @@ class Watch {
       if (publishStateOf(this.botId).on) await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__cleftPubOn = 1;', worldName: GUARD_WORLD, runImmediately: true });
       await send('Page.addScriptToEvaluateOnNewDocument', { source: GUARD_SOURCE, worldName: GUARD_WORLD, runImmediately: true });
       await send('Runtime.enable');
+      // After Runtime.enable, so a hook's binding calls are heard from the first one.
+      for (const h of attachHooks) await h(this.botId, session, send).catch(() => undefined);
       await send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true, filter: [{ type: 'iframe', exclude: false }, { exclude: true }] });
       await send('Runtime.runIfWaitingForDebugger');
     })();
@@ -121,10 +140,31 @@ class Watch {
   private event(payload: string) {
     let e: Json;
     try { e = JSON.parse(payload); } catch { return; }
-    const kind = ['held', 'changed', 'passed', 'captcha', 'pub_held', 'pub_dry', 'published'].includes(e?.t) ? e.t : null;
+    const kind = ['held', 'changed', 'passed', 'captcha', 'pub_held', 'pub_dry', 'published', 'kind_held', 'kind_passed'].includes(e?.t) ? e.t : null;
     if (!kind) return;
     const origin = typeof e.origin === 'string' ? e.origin.slice(0, 200) : '';
     const label = typeof e.label === 'string' ? e.label.slice(0, 80) : undefined;
+    if (kind === 'kind_held' || kind === 'kind_passed') {
+      const action = ['delete', 'send', 'share', 'post', 'credentials'].includes(e.kind) ? e.kind as ActionKind : null;
+      if (!action) return;
+      const site = siteOf(typeof e.site === 'string' ? e.site : origin);
+      const last = this.notes[this.notes.length - 1];
+      if (last && last.kind === kind && last.origin === origin && last.action === action && Date.now() - last.at < 3000) return;
+      const note: GuardNote = { at: Date.now(), kind, label, origin, action, site, via: e.via === 'once' ? 'once' : e.via === 'standing' ? 'standing' : undefined };
+      this.notes.push(note);
+      if (this.notes.length > 20) this.notes.shift();
+      if (kind === 'kind_held') heldKinds.set(this.botId, note);
+      else {
+        // A press a standing answer let through is logged with the rule uses (Permissions screens).
+        const key = browserKindKey(action, site);
+        if (note.via === 'once') { onceKinds.delete(this.botId); heldKinds.delete(this.botId); }
+        else {
+          const id = standingAllow(this.botId, kindChat.get(this.botId), key);
+          if (id) { try { noteRuleUse(id, this.botId, key, { label, origin }, `Pressed "${label ?? KIND_NAME[action]}" on ${site}`); } catch { /* log only */ } }
+        }
+      }
+      return;
+    }
     if (kind === 'pub_held' || kind === 'pub_dry' || kind === 'published') {
       const note: GuardNote = { at: Date.now(), kind, label, origin, platform: typeof e.platform === 'string' ? e.platform.slice(0, 20) : '', preview: typeof e.preview === 'string' ? e.preview.slice(0, 160) : '', h: typeof e.h === 'string' ? e.h.slice(0, 32) : undefined };
       const last = this.notes[this.notes.length - 1];
@@ -181,6 +221,12 @@ class Watch {
     await this.call(ctx, `g.setPublish(${JSON.stringify(JSON.stringify(st))})`).catch(() => undefined);
   }
 
+  /** Send what kinds of action are allowed into one guard context. */
+  async pushKinds(ctx: Ctx) {
+    if (!this.kindState) return;
+    await this.call(ctx, `g.setKinds && g.setKinds(${JSON.stringify(this.kindState)})`).catch(() => undefined);
+  }
+
   async call(ctx: Ctx, expr: string): Promise<Json> {
     const r = await this.cdp.send('Runtime.evaluate', { expression: `(() => { const g = window.__cleftGuard; return g ? (${expr}) : { noguard: true }; })()`, contextId: ctx.id, returnByValue: true, awaitPromise: true }, ctx.session, 6000);
     if (r?.exceptionDetails) throw new Error('The page check failed.');
@@ -208,11 +254,16 @@ export async function watchFor(botId: string): Promise<Watch | null> {
   const p = (async () => {
     const base = botCdp(botId);
     if (!base) return null;
+    let ws: WebSocket | null = null;
     try {
       const v = await fetch(`${base.replace(/\/$/, '')}/json/version`, { signal: AbortSignal.timeout(1500) }).then((r) => r.json()) as { webSocketDebuggerUrl?: string };
       if (!v.webSocketDebuggerUrl) return null;
-      const ws = new WebSocket(v.webSocketDebuggerUrl, { perMessageDeflate: false, maxPayload: 64 * 1024 * 1024 });
-      await new Promise<void>((resolve, reject) => { ws.once('open', () => resolve()); ws.once('error', reject); setTimeout(() => reject(new Error('timeout')), 3000); });
+      ws = new WebSocket(v.webSocketDebuggerUrl, { perMessageDeflate: false, maxPayload: 64 * 1024 * 1024 });
+      const sock = ws;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await new Promise<void>((resolve, reject) => { sock.once('open', () => resolve()); sock.once('error', reject); timer = setTimeout(() => reject(new Error('timeout')), 3000); });
+      } finally { clearTimeout(timer); }
       const w = new Watch(botId, new Cdp(ws));
       await w.start();
       // Give attach events a moment to arrive for pages that were already open.
@@ -220,6 +271,8 @@ export async function watchFor(botId: string): Promise<Watch | null> {
       watches.set(botId, w);
       return w;
     } catch {
+      // A socket that timed out or failed to start is closed, not left open to Chrome.
+      try { ws?.terminate(); } catch { /* gone */ }
       return null;
     } finally {
       connecting.delete(botId);
@@ -279,6 +332,8 @@ export interface PageRead {
   card: { brand: string; last4: string } | null;
   items: string[]; shipping: string; shipTo: string; recurring: string;
   controls: string[]; cardFields: boolean; captcha: boolean;
+  /** Buttons that delete, send, share, post or change a password (action-kinds.ts), as the guard read them. */
+  kindControls?: { k: Exclude<ActionKind, 'pay'>; l: string }[];
   /** Payment frames inside the page (PayPal, Stripe...): their origins. */
   processors: string[];
 }
@@ -300,6 +355,7 @@ export async function readPage(botId: string): Promise<PageRead | null> {
     const f = await w.call(c, 'g.read()').catch(() => null);
     if (f?.processor) processors.push(f.origin);
     if (f?.controls?.length) r.controls.push(...f.controls.map((l: string) => `${l} (${f.origin})`));
+    if (Array.isArray(f?.kindControls) && f.kindControls.length) r.kindControls = [...(r.kindControls ?? []), ...f.kindControls].slice(0, 8);
     if (f?.captcha) r.captcha = true;
     if (f?.cardFields) r.cardFields = true;
   }
@@ -363,6 +419,61 @@ export async function disarmPurchase(botId: string) {
   const w = watches.get(botId);
   if (!w) return;
   for (const c of w.contexts.values()) await w.call(c, 'g.disarm()').catch(() => undefined);
+}
+
+// ------------------------------------------------------------------ kinds of action (action-kinds.ts)
+
+/** The last press of a kind the guard held, per bot: what request_action_approval asks about. */
+const heldKinds = new Map<string, GuardNote>();
+/** An "Allow once" for a kind on a site, per bot, until it is used or runs out. */
+const onceKinds = new Map<string, { kind: ActionKind; site: string; until: number }>();
+/** The chat whose turn last used the browser, per bot: its "Allow for this conversation" answers count. */
+const kindChat = new Map<string, string>();
+/** Bots whose screen a person has taken control of (vnc.ts), with how many control viewers are open. */
+const personControl = new Map<string, number>();
+export const KIND_ONCE_MS = 2 * 60_000;
+
+/** The held press request_action_approval asks about: the newest within ten minutes. */
+export function lastHeldKind(botId: string): GuardNote | null {
+  const n = heldKinds.get(botId);
+  return n && Date.now() - n.at < 10 * 60_000 ? n : null;
+}
+
+/** What the pages are told: the person's control, the kinds allowed on which sites, and an armed "once". */
+function kindStateFor(botId: string, chatId: string | undefined): string {
+  const keys = new Set<string>();
+  const rules = db.prepare("SELECT tool FROM allow_rules WHERE bot_id=? AND tool LIKE 'browser_kind__%'").all(botId) as { tool: string }[];
+  for (const r of rules) keys.add(r.tool.toLowerCase());
+  for (const k of conversationKindKeys(chatId)) keys.add(k.toLowerCase());
+  const allow = [...keys].map(parseBrowserKindKey).filter((x): x is { kind: ActionKind; site: string } => !!x && x.kind !== 'credentials').map((x) => ({ k: x.kind, s: x.site }));
+  const once = onceKinds.get(botId);
+  const live = once && once.until > Date.now() ? once : null;
+  if (once && !live) onceKinds.delete(botId);
+  return JSON.stringify({ control: (personControl.get(botId) ?? 0) > 0, allow, ...(live ? { once: { k: live.kind, s: live.site, ms: live.until - Date.now() } } : { keepOnce: false }) });
+}
+
+/** Tell every open page of this bot's browser what is allowed now (only when it changed, unless `force`). */
+export async function refreshKindState(botId: string, chatId?: string, force = false): Promise<void> {
+  if (chatId) kindChat.set(botId, chatId);
+  const w = watches.get(botId);
+  if (!w) return;
+  const st = kindStateFor(botId, kindChat.get(botId));
+  if (!force && st === w.kindState) return;
+  w.kindState = st;
+  await Promise.all([...w.contexts.values()].map((c) => w.pushKinds(c)));
+}
+
+/** After "Allow once" on a kind's card: the next press of that kind on that site goes through, within two minutes. */
+export async function armKindOnce(botId: string, kind: ActionKind, site: string, chatId?: string): Promise<void> {
+  onceKinds.set(botId, { kind, site: siteOf(site), until: Date.now() + KIND_ONCE_MS });
+  await refreshKindState(botId, chatId, true);
+}
+
+/** vnc.ts: a person took control of (or let go of) this bot's screen. Their own presses are never held. */
+export function setPersonControl(botId: string, on: boolean) {
+  const n = Math.max(0, (personControl.get(botId) ?? 0) + (on ? 1 : -1));
+  if (n) personControl.set(botId, n); else personControl.delete(botId);
+  void refreshKindState(botId).catch(() => undefined);
 }
 
 // ------------------------------------------------------------------ secure input
@@ -438,6 +549,23 @@ export function rememberToScrub(botId: string, value: string) {
   scrubs.set(botId, list.slice(-20));
 }
 
+/** Whether a value is one the person entered through a secure-input card in the last hour. */
+export function isRememberedSecret(botId: string, value: string): boolean {
+  const v = value.trim();
+  if (v.length < 4) return false;
+  const h = crypto.createHash('sha256').update(SALT + v).digest('hex');
+  return (scrubs.get(botId) ?? []).some((s) => s.until > Date.now() && s.hash === h);
+}
+
+/** Run a DevTools call on every page and frame session of a bot's Chrome now (teach.ts). Returns how many there were. */
+export async function forEachSession(botId: string, fn: (session: string, send: Send) => Promise<void>): Promise<number> {
+  const w = await watchFor(botId);
+  if (!w) return -1;
+  const list = [...w.sessions.values()];
+  await Promise.all(list.map(async (s) => { await s.ready; await fn(s.id, (m, p = {}) => w.cdp.send(m, p, s.id).catch(() => undefined)).catch(() => undefined); }));
+  return list.length;
+}
+
 export function scrubList(botId: string): { salt: string; items: { hash: string; len: number }[] } | null {
   const list = (scrubs.get(botId) ?? []).filter((s) => s.until > Date.now());
   scrubs.set(botId, list);
@@ -461,6 +589,10 @@ export function notesText(notes: GuardNote[]): string {
     else if (n.kind === 'pub_held') lines.push(`[Cleft guard] The "${n.label ?? 'Post'}" press on ${n.origin} was held: nothing was published. Only captions on a posting plan the person approved can go out (request_posting_approval). If the caption was approved, the text in the box must match it exactly; if you changed it, ask again.`);
     else if (n.kind === 'pub_dry') lines.push(`[Cleft guard] Dry run: you reached the final "${n.label ?? 'Post'}" button on ${n.origin}. It was held; nothing was published.`);
     else if (n.kind === 'published') lines.push(`[Cleft guard] The approved "${n.label ?? 'Post'}" press on ${n.origin} went through. Check the page shows it scheduled or posted, then call posting_status to record it.`);
+    else if (n.kind === 'kind_held') lines.push(n.action === 'credentials'
+      ? `[Cleft guard] The "${n.label ?? 'change password'}" press on ${n.site ?? n.origin} was held: changing a password or security setting on a website is the person's to do. Call request_action_approval so they get a card to do it themselves. Do not try to press it again another way.`
+      : `[Cleft guard] The "${n.label ?? KIND_NAME[n.action ?? 'send']}" press on ${n.site ?? n.origin} was held, so nothing was ${n.action === 'delete' ? 'deleted' : n.action === 'share' ? 'shared' : n.action === 'post' ? 'posted' : 'sent'}: it ${n.action === 'delete' ? 'deletes something' : n.action === 'share' ? 'shares something with other people' : n.action === 'post' ? 'posts or publishes something' : 'sends something to other people'}, so the person decides. Call request_action_approval with one line on exactly what it does; after they allow it, press it again. Do not try another way round (scripts, other buttons, keyboard shortcuts).`);
+    else if (n.kind === 'kind_passed' && n.via === 'once') lines.push(`[Cleft guard] The allowed "${n.label ?? 'press'}" on ${n.site ?? n.origin} went through. Check the page shows it done and tell the person.`);
     else if (n.kind === 'captcha') lines.push(`[Cleft guard] ${n.origin} is showing a CAPTCHA. Do not try to solve it: call ask_for_help_on_screen so the person can do it on your screen.`);
   }
   return lines.join('\n');
@@ -477,12 +609,23 @@ const EXEC_ACTS = /(click|tap\b|press|keyboard|mouse|submit|evaluate|execute_?sc
  * Before a browser tool runs: on a page where one more click could pay, tools that can act wait for an
  * armed purchase approval. Covers ways round the in-page guard (form.submit(), fetch, raw DevTools input).
  */
-export async function gateBrowserTool(botId: string, tool: string, args: Json): Promise<{ block: string } | null> {
+export async function gateBrowserTool(botId: string, tool: string, args: Json, chatId?: string): Promise<{ block: string } | null> {
   // Every browser step makes sure the guard is in the bot's Chrome, so pay buttons are held from the first page.
   const w = await watchFor(botId).catch(() => null);
-  if (!w || (tool !== 'browser_exec' && tool !== 'browser_cdp')) return null;
+  // ...and that its pages know which kinds of action the person allowed for the chat making this step.
+  if (w) await refreshKindState(botId, chatId).catch(() => undefined);
+  if (tool !== 'browser_exec' && tool !== 'browser_cdp') return null;
+  // Script and raw DevTools steps go around the in-page holds, so they wait while the guard cannot be put in.
+  if (!w) return { block: 'The browser guard could not reach this browser just now, so script and DevTools steps wait. Try again in a moment, or click and type normally.' };
+  // A DevTools call aimed at another tab is checked against that tab's page, which is not read here:
+  // only looking is allowed there unless a purchase was approved.
+  if (tool === 'browser_cdp' && (args?.sessionId || args?.targetId) && !CDP_LOOKS.test(String(args?.method ?? '')) && (!purchaseArmed(botId) || publishStateOf(botId).on)) {
+    return { block: 'DevTools steps that change a page work only on the tab you are looking at. Switch to that tab first, then try again.' };
+  }
   const pubBlock = await gatePublish(botId, tool, args).catch(() => null);
   if (pubBlock) return pubBlock;
+  const kindBlock = await gateKinds(botId, tool, args, chatId).catch(() => null);
+  if (kindBlock) return kindBlock;
   if (purchaseArmed(botId)) return null;
   const read = await readPage(botId).catch(() => null);
   if (!isPayPage(read)) return null;
@@ -496,9 +639,28 @@ export async function gateBrowserTool(botId: string, tool: string, args: Json): 
   return { block: `This page (${read!.origin}) can take a payment with one more step, so the browser only looks until a purchase is approved. Call request_purchase_approval: the person sees the total, card and merchant read from the page. Until then use page_info() or capture_screenshot() to look. After they approve you have 3 minutes to place the order. To fill a card number, CVC or password, call ask_secure_input; never type those yourself.` };
 }
 
+/**
+ * Script and raw DevTools steps go around the in-page kinds hold: on a page that shows a Send, Delete, Share,
+ * Post or change-password button, an acting one waits until the person allowed that kind on that site (for
+ * the conversation or always). Looking is always fine.
+ */
+async function gateKinds(botId: string, tool: string, args: Json, chatId?: string): Promise<{ block: string } | null> {
+  if ((personControl.get(botId) ?? 0) > 0) return null;
+  const acts = tool === 'browser_cdp' ? !CDP_LOOKS.test(String(args?.method ?? '')) : EXEC_ACTS.test(String(args?.code ?? args?.script ?? JSON.stringify(args ?? {})));
+  if (!acts) return null;
+  const read = await readPage(botId).catch(() => null);
+  const controls = read?.kindControls ?? [];
+  if (!read || !controls.length) return null;
+  const site = siteOf(read.origin);
+  const open = controls.filter((c) => c.k === 'credentials' || !standingAllow(botId, chatId, browserKindKey(c.k, site)));
+  if (!open.length) return null;
+  const names = [...new Set(open.map((c) => `"${c.l}"`))].slice(0, 3).join(', ');
+  return { block: `This page (${site}) has ${names}, which the person decides on, so script and DevTools steps that could press it are refused here. Click the button itself: if it is held, call request_action_approval. Use page_info() or capture_screenshot() to look.` };
+}
+
 /** Ways round the in-page publish hold: script-made submits and requests, synthetic events, raw network. */
 const PUB_BYPASS_EXEC = /(fetch\s*\(|xmlhttprequest|sendbeacon|requestsubmit|\.submit\s*\(|dispatchevent|new\s+(mouse|pointer|keyboard)?event|graphql|\/api\/graphql|create_?tweet|atob\s*\(|fromcharcode|\\x[0-9a-f]{2}|\\u[0-9a-f]{4}|requests\.|urllib|socket)/i;
-const PUB_BYPASS_CDP = /^(Fetch\.|Network\.(replayXHR|loadNetworkResource)|Runtime\.(evaluate|callFunctionOn|compileScript|runScript)|Page\.(addScriptToEvaluateOnNewDocument|createIsolatedWorld))/;
+const PUB_BYPASS_CDP = /^(Fetch\.|Network\.(replayXHR|loadNetworkResource)|Runtime\.(evaluate|callFunctionOn|compileScript|runScript)|Page\.(addScriptToEvaluateOnNewDocument|createIsolatedWorld)|DOM\.(set\w*|remove\w*|moveTo|copyTo|undo|redo)$|CSS\.(set\w*|add\w*|createStyleSheet)$)/;
 const SOCIAL_HOST = /(^|\.)(facebook\.com|instagram\.com|youtube\.com|x\.com|twitter\.com|tiktok\.com|linkedin\.com|threads\.net|threads\.com)$/i;
 
 /**

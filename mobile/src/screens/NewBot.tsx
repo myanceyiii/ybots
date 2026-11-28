@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ScrollView, TextInput, View } from 'react-native';
 import { KeyboardSafe } from '../components/KeyboardSafe';
 import type { Bot, Client } from '../api';
+import type { AvatarColor, AvatarShape } from '@shared/types';
 import { BotShape } from '../components/BotAvatar';
 import { ShapePicker } from '../components/ShapePicker';
 import { Header, HeaderAction, HeaderTitle, ListGroup, ListRow, Notice, RoundButton } from '../components/ui';
@@ -10,8 +11,8 @@ import { color } from '../theme';
 /** New bot (from the + menu): a big preview, its name, then shape and colour, or a custom look. */
 export function NewBot({ api, onBack, onCreated }: { api: Client; onBack: () => void; onCreated: (b: Bot, customLook: boolean) => void }) {
   const [name, setName] = useState('');
-  const [shape, setShape] = useState('blob');
-  const [tint, setTint] = useState('blue');
+  const [shape, setShape] = useState<AvatarShape>('blob');
+  const [tint, setTint] = useState<AvatarColor>('blue');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

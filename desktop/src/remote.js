@@ -423,6 +423,8 @@ function createRemote({ app, partition, getAddress, pagesDir, onStatus, log = { 
     clearInterval(pinger);
     closeAllScreens('Remote use was turned off on the PC.');
     stopCommands();
+    // The input helper (PowerShell on Windows) ends with the link; the next control session starts a new one.
+    if (injector) { try { injector.close(); } catch { /* */ } injector = null; }
     if (ws) { const s = ws; ws = null; try { s.close(1000, 'turned off'); } catch { /* */ } }
   }
 

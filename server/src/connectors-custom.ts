@@ -1,4 +1,7 @@
 import crypto from 'node:crypto';
+import dns from 'node:dns';
+import net from 'node:net';
+import ipaddr from 'ipaddr.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { db, now } from './db.js';
@@ -136,22 +139,56 @@ async function getJson(u: string, fetchImpl: typeof fetch): Promise<any | null> 
   } catch { return null; }
 }
 
-export async function discover(url: URL, fetchImpl: typeof fetch = fetch): Promise<{ resource?: string; authServer: string; meta: any }> {
+/** Address ranges a remote server's sign-in metadata may not point us at (this machine, the LAN, cloud metadata). */
+const INTERNAL = new Set(['unspecified', 'broadcast', 'multicast', 'linkLocal', 'loopback', 'private', 'uniqueLocal', 'carrierGradeNat', 'reserved', 'ipv4Mapped', 'rfc6052', 'rfc6145', '6to4', 'teredo']);
+const internalIp = (ip: string) => {
+  try { const a = ipaddr.process(ip); return INTERNAL.has(a.range()); } catch { return true; }
+};
+type Lookup = (host: string) => Promise<string[]>;
+const dnsLookup: Lookup = async (host) => (await dns.promises.lookup(host, { all: true })).map((r) => r.address);
+
+/**
+ * An address taken from a server's sign-in metadata. Only http(s), and http only on this computer. A server on
+ * another machine may not send us to an internal address (this computer, the LAN, 169.254.169.254) unless that
+ * address is the server's own host: a hostile server must not use YBots to reach things only YBots can.
+ */
+export async function checkEndpoint(raw: unknown, server: URL, lookup: Lookup = dnsLookup): Promise<URL> {
+  let u: URL;
+  try { u = new URL(String(raw ?? '')); } catch { throw new ConnectorError("That server's sign-in details are not valid addresses."); }
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && isLoopback(u.href))) throw new ConnectorError("That server's sign-in details point somewhere YBots won't go (only https).");
+  if (u.username || u.password) throw new ConnectorError("That server's sign-in details carry a password in an address.");
+  if (isLoopback(server.href) || u.hostname === server.hostname) return u;
+  const host = u.hostname.replace(/^\[|\]$/g, '');
+  let ips: string[];
+  try { ips = net.isIP(host) ? [host] : await lookup(host); } catch { throw new ConnectorError(`YBots could not find ${u.hostname}.`); }
+  if (!ips.length || ips.some(internalIp)) throw new ConnectorError("That server's sign-in details point at an internal address, so YBots won't use them.");
+  return u;
+}
+
+export async function discover(url: URL, fetchImpl: typeof fetch = fetch, lookup: Lookup = dnsLookup): Promise<{ resource?: string; authServer: string; meta: any }> {
   // The server's 401 names its resource metadata; otherwise try the well-known places.
   let prm: any = null;
   try {
     const r = await fetchImpl(url.href, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'cleft-bot', version: '1' } } }), signal: AbortSignal.timeout(15000) });
     const m = /resource_metadata="([^"]+)"/.exec(r.headers.get('www-authenticate') ?? '');
-    if (m) prm = await getJson(new URL(m[1], url).href, fetchImpl);
+    if (m) prm = await getJson((await checkEndpoint(new URL(m[1], url).href, url, lookup)).href, fetchImpl);
   } catch { /* try the well-known paths */ }
   const p = url.pathname.replace(/\/+$/, '');
   prm ??= (p && p !== '/' ? await getJson(`${url.origin}/.well-known/oauth-protected-resource${p}`, fetchImpl) : null) ?? (await getJson(`${url.origin}/.well-known/oauth-protected-resource`, fetchImpl));
   const authServer = String(prm?.authorization_servers?.[0] ?? url.origin).replace(/\/+$/, '');
-  const as = new URL(authServer);
+  const as = await checkEndpoint(authServer, url, lookup);
   const asPath = as.pathname.replace(/\/+$/, '');
   const meta = (await getJson(`${as.origin}/.well-known/oauth-authorization-server${asPath}`, fetchImpl)) ?? (await getJson(`${as.origin}/.well-known/openid-configuration${asPath}`, fetchImpl))
     ?? (asPath ? await getJson(`${authServer}/.well-known/openid-configuration`, fetchImpl) : null);
   if (!meta?.authorization_endpoint || !meta?.token_endpoint) throw new ConnectorError("That server doesn't offer a sign-in YBots can use. If it takes a key instead, choose Key.");
+  // Every address the metadata names is checked before it is used or shown (a javascript: sign-in link, a
+  // token endpoint on 169.254.169.254, ...). The sign-in page itself only needs to be http(s).
+  let page: URL | null = null;
+  try { page = new URL(String(meta.authorization_endpoint)); } catch { /* refused below */ }
+  if (!page || !(page.protocol === 'https:' || (page.protocol === 'http:' && isLoopback(page.href)))) throw new ConnectorError("That server's sign-in page is not an https address.");
+  meta.authorization_endpoint = page.href;
+  meta.token_endpoint = (await checkEndpoint(meta.token_endpoint, url, lookup)).href;
+  if (meta.registration_endpoint) meta.registration_endpoint = (await checkEndpoint(meta.registration_endpoint, url, lookup)).href;
   return { resource: prm?.resource, authServer, meta };
 }
 

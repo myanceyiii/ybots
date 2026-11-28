@@ -1,6 +1,8 @@
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { safeLink } from '@shared/safe-url';
 import { plainStep, useSimple } from '../lib/simple';
 import type { Bot, ChatFile, LiveState, MessageBody, Row, ToolCallBody } from '@shared/types';
+import { HANDOFF_HINT, handoffLabel } from '@shared/handoff-label';
 import { BotAvatar, BotAvatarFor } from '../avatar/BotAvatar';
 import { isWaitingForYou } from '../lib/phrases';
 import { clock, dividerLabel, duration, fullDate } from '../lib/time';
@@ -27,6 +29,16 @@ type Item =
   | { kind: 'row'; key: string; row: Row };
 
 const DIVIDER_GAP = 60 * 60 * 1000;
+
+/**
+ * Answered choice buttons (server/src/choices.ts) leave the chat: the tap already put the answer in the chat
+ * as your message, so a second "✓ answer" chip above it only repeated it. Same rule on Android
+ * (mobile/src/screens/Chat.tsx answeredChoice).
+ */
+const answeredChoice = (r: Row) => {
+  const b: any = r.body;
+  return b.type === 'card' && b.card === 'view' && !!b.quick && b.blocks?.[0]?.type === 'choice' && !!b.blocks[0].sentAt;
+};
 const GROUP_GAP = 5 * 60 * 1000;
 
 /** Turns rows into render items: date dividers, grouped bubbles, collapsed tool-call steps, cards, events. */
@@ -34,6 +46,7 @@ function buildItems(rows: Row[]): Item[] {
   const items: Item[] = [];
   let prevTs = 0;
   for (const row of rows) {
+    if (answeredChoice(row)) continue;
     if (!prevTs || row.createdAt - prevTs > DIVIDER_GAP) items.push({ kind: 'divider', key: `d${row.seq}`, ts: row.createdAt });
     const before = prevTs;
     prevTs = row.createdAt;
@@ -196,10 +209,10 @@ function Linked({ text }: { text: string }) {
   return <>{text.split(URL_RE).map((part, i) => (i % 2 ? <a key={i} href={part} target="_blank" rel="noreferrer noopener">{part}</a> : <Fragment key={i}>{part}</Fragment>))}</>;
 }
 
-/** Your own text: links open, and in a group chat each @Bot you named is bold (the Bots it went to). */
-function WithMentions({ text, room }: { text: string; room: boolean }) {
-  const names = useStore((s) => (room ? s.bots.filter((b) => b.kind !== 'room').map((b) => b.name).join('\n') : ''));
-  if (!room || !names || !text.includes('@')) return <Linked text={text} />;
+/** Your own text: links open, and each @Bot you named is bold (the Bots it went to, in a group or a bot's own chat). */
+function WithMentions({ text }: { text: string; room?: boolean }) {
+  const names = useStore((s) => s.bots.filter((b) => b.kind !== 'room').map((b) => b.name).join('\n'));
+  if (!names || !text.includes('@')) return <Linked text={text} />;
   return <>{mentionParts(text, names.split('\n')).map((p, i) => (p.mention ? <strong key={i} className="bubble__mention">{p.text}</strong> : <Linked key={i} text={p.text} />))}</>;
 }
 
@@ -298,6 +311,7 @@ const Bubble = memo(function Bubble({ row, side, pos, chatId, ownerId, chatName,
       <span className="bubble__time" title={fullDate(row.createdAt)}>{clock(row.createdAt)}</span>
     </div>
     {(b.editedTo || b.editOf) && <div className={`bubble__edited is-${side}`}>{b.editedTo ? 'Edited · new version below' : 'Edited'}</div>}
+    {handoffLabel(b.handoff) && <div className={`bubble__edited bubble__handoff is-${side}`} title={HANDOFF_HINT}>{handoffLabel(b.handoff)}</div>}
     {b.steer && <div className={`bubble__edited bubble__steer is-${side} is-${b.steer}`} title="Sent while the bot was working. It is never an approval.">{STEER_LABEL[b.steer]}</div>}
     <ReactionChips row={row} chatId={chatId} side={side} />
     {own && <OwnMessageActions text={b.text} chatId={chatId} seq={row.seq} editable={!b.editedTo} />}
@@ -317,8 +331,8 @@ function SenderLabel({ from, sender, chatId, chatName, room }: { from: NonNullab
         {sender ? <BotAvatarFor bot={sender} size={28} still head className="sender-label__pic" /> : <span className="sender-label__pic sender-label__initial" aria-hidden>{from.name.slice(0, 1).toUpperCase()}</span>}
         <span className="sender-label__name">{from.name}</span>
         {to && <span className="sender-label__to">to {to}</span>}
-        {from.via === 'slack' && (from.link
-          ? <a className="sender-label__via" href={from.link} target="_blank" rel="noreferrer">· via Slack ↗</a>
+        {from.via === 'slack' && (safeLink(from.link)
+          ? <a className="sender-label__via" href={safeLink(from.link)!} target="_blank" rel="noreferrer">· via Slack ↗</a>
           : <span className="sender-label__via">· via Slack</span>)}
       </div>
     );
@@ -331,8 +345,8 @@ function SenderLabel({ from, sender, chatId, chatName, room }: { from: NonNullab
       {from.kind === 'routine' ? (
         <button type="button" className="sender-label__routine" onClick={() => useConfigUI.getState().openBotSettings(chatId, 'routines')} title="Open this bot's routines">Routine · {from.name}</button>
       ) : <span>{from.kind === 'voice' ? 'Asked on a voice call' : from.kind === 'agent' ? `Sent by ${from.name} · not you` : `From ${from.name}`}</span>}
-      {from.via === 'slack' && (from.link
-        ? <a className="sender-label__via" href={from.link} target="_blank" rel="noreferrer">· via Slack ↗</a>
+      {from.via === 'slack' && (safeLink(from.link)
+        ? <a className="sender-label__via" href={safeLink(from.link)!} target="_blank" rel="noreferrer">· via Slack ↗</a>
         : <span className="sender-label__via">· via Slack</span>)}
     </div>
   );
@@ -466,7 +480,9 @@ function SystemRow({ row }: { row: Row }) {
   const b = row.body;
   if (b.type === 'event') return <div className="system-event">{b.text}</div>;
   if (b.type === 'notice') return <div className={`notice is-${b.tone ?? 'info'}`}>{b.text}</div>;
-  if (b.type === 'card') return <CardRow row={row} />;
+  // A view card marks its own place; every other card gets one here, so a Needs you row (NeedsYouBoard.tsx)
+  // or a search can bring it to the middle and light it up.
+  if (b.type === 'card') return b.card === 'view' ? <CardRow row={row} /> : <div className="card-anchor" data-seq={row.seq}><CardRow row={row} /></div>;
   return null;
 }
 
@@ -474,7 +490,7 @@ interface Props { bot: Bot; rows: Row[]; live: LiveState | undefined; loaded: bo
 
 const NO_PENDING: Pending[] = [];
 /** A bot's (or a card's) row: what "new" and "unread" count. */
-const isIncoming = (r: Row) => (r.body.type === 'message' ? (r.body.role === 'assistant' || (!!r.body.from && r.body.from.kind !== 'voice')) && !r.body.streaming : r.body.type === 'card');
+const isIncoming = (r: Row) => !answeredChoice(r) && (r.body.type === 'message' ? (r.body.role === 'assistant' || (!!r.body.from && r.body.from.kind !== 'voice')) && !r.body.streaming : r.body.type === 'card');
 
 export function Transcript({ bot, rows, live, loaded, generation, ownerId = bot.id }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -561,7 +577,8 @@ export function Transcript({ bot, rows, live, loaded, generation, ownerId = bot.
   const pending = useMemo(() => {
     const mine = outbox.filter((p) => p.chatId === bot.id);
     if (!mine.length) return NO_PENDING;
-    return mine.filter((p) => !rows.some((r) => r.seq > p.afterSeq && r.body.type === 'message' && r.body.role === 'user' && !r.body.from && r.body.text === p.text));
+    // A failed one always stays (with Retry and Edit); one with no words (pictures only) is never matched by its words.
+    return mine.filter((p) => p.state === 'failed' || !p.text || !rows.some((r) => r.seq > p.afterSeq && r.body.type === 'message' && r.body.role === 'user' && !r.body.from && r.body.text === p.text));
   }, [outbox, rows, bot.id]);
   // Your own message always scrolls into view.
   const pendingCount = pending.length;
@@ -628,7 +645,7 @@ export function Transcript({ bot, rows, live, loaded, generation, ownerId = bot.
         if (el) {
           el.scrollIntoView({ block: 'center' }); setLit(focus.seq); setTimeout(() => setLit(null), 2600);
           // A card (a pinned board's Jump to message) lights up the same way a message does.
-          if (el.classList.contains('view-card')) { el.classList.add('is-lit'); setTimeout(() => el.classList.remove('is-lit'), 2600); }
+          if (el.classList.contains('view-card') || el.classList.contains('card-anchor')) { el.classList.add('is-lit'); setTimeout(() => el.classList.remove('is-lit'), 2600); }
         }
         if (useStore.getState().focus === focus) useStore.getState().set({ focus: null });
       }));

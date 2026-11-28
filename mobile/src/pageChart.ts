@@ -1,6 +1,8 @@
 /**
- * Page charts as an SVG picture: a copy of server/src/page-chart.ts (the web app and the exports use that one),
- * drawn on the phone with react-native-svg's SvgXml. Keep the two in step. All text is escaped.
+ * Page charts as a static SVG picture, with no imports so every app draws the very same picture: the web
+ * app reaches this file through its @shared alias, exports put it in HTML, Word and PDF, and the Android app
+ * draws it with react-native-svg's SvgXml from mobile/src/pageChart.ts, a word-for-word copy made by
+ * scripts/shared-copies.mjs. All text is escaped, so the SVG carries no markup from the Page.
  */
 
 /** The numbers a chart draws: its own, or the first column (labels) and number columns of a table block. */
@@ -62,7 +64,7 @@ export function chartSvg(b: any, page: { blocks: any[] }, w = 640, h = 320, look
   } else {
     const k = Math.max(1, series.length);
     const bw = (step * 0.7) / k;
-    marks = series.map((sr, si) => sr.values.map((v, i) => { const x = pad.l + step * i + step * 0.15 + si * bw; const y0 = y(Math.max(0, v)), y1 = y(Math.min(0, v)); return `<rect x="${x.toFixed(1)}" y="${y0.toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${Math.max(0.5, y1 - y0).toFixed(1)}" fill="${PALETTE[si % 8]}"/>`; }).join('')).join('');
+    marks = series.map((sr, si) => sr.values.map((v, i) => { const x = pad.l + step * i + step * 0.15 + si * bw; const y0 = y(Math.max(0, v)), y1 = y(Math.min(0, v)); return `<rect x="${x.toFixed(1)}" y="${y0.toFixed(1)}" width="${Math.max(0.5, bw - 2).toFixed(1)}" height="${Math.max(0.5, y1 - y0).toFixed(1)}" fill="${PALETTE[si % 8]}"/>`; }).join('')).join('');
   }
   const legend = series.length > 1 ? series.map((sr, i) => `<rect x="${pad.l + i * 130}" y="${h - 22}" width="12" height="12" fill="${PALETTE[i % 8]}"/><text x="${pad.l + 18 + i * 130}" y="${h - 12}" font-size="12" fill="${look.ink}">${esc(sr.name.slice(0, 16))}</text>`).join('') : '';
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" font-family="Liberation Sans, Arial, sans-serif"><rect width="100%" height="100%" fill="${look.bg}"/>${title}${grid}${marks}${xl}${legend}</svg>`;

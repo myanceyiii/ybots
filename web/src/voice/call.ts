@@ -177,6 +177,7 @@ class VoiceCall {
   private announcedCards = new Set<number>();
   /** The approval card whose "say yes or no" was last actually played, and the one in play when you started speaking. */
   private heardCard: { approvalId: string; digest: string } | null = null;
+  private idleWaiters: (() => void)[] = [];
   private cardAtSpeech: { approvalId: string; digest: string } | null = null;
   private lastHeardAt = 0;
   private lastSpokeAt = 0;
@@ -193,7 +194,7 @@ class VoiceCall {
     this.ctx = createAudioContext();
     this.player = new PcmPlayer(this.ctx);
     this.player.onStart = () => { setV({ speaking: true }); };
-    this.player.onIdle = () => { this.lastSpokeAt = Date.now(); setV({ speaking: false }); };
+    this.player.onIdle = () => { this.lastSpokeAt = Date.now(); setV({ speaking: false }); this.idleWaiters.splice(0).forEach((f) => f()); };
     this.vad = new Vad(() => this.speechStarted(), (pcm) => { setV({ listening: false }); if (pcm) void this.sendTurn(pcm); });
   }
 
@@ -215,14 +216,19 @@ class VoiceCall {
       if (this.ended) { void voiceApi.end(this.botId, this.sess.callId, [], 'Cancelled'); stream.getTracks().forEach((t) => t.stop()); return; }
       this.mic = new MicCapture(this.ctx, stream, (pcm) => { if (!this.ended && !useVoice.getState().muted) this.vad.feed(pcm, this.player.playing); });
       await this.mic.start();
+      // Ended while the microphone was starting: end() already ran, so nothing here may bring the call back.
+      if (this.ended) return;
       setV({ status: 'live', callId: this.sess.callId, startedAt: Date.now() });
       // Keep a phone's screen (and so the call) awake.
       try { this.wakeLock = await (navigator as any).wakeLock?.request('screen'); } catch { /* not offered */ }
+      if (this.ended) { void this.wakeLock?.release().catch(() => {}); this.wakeLock = null; return; }
       this.watchChat();
       this.statusTimer = setInterval(() => this.statusUpdate(), 2000);
       this.say(this.sess.greeting, 'greeting');
     } catch (e) {
-      this.end((e as Error).message || 'Could not start the call');
+      // The microphone is stopped by end() only once MicCapture holds it; before that it is stopped here.
+      if (!this.mic) stream.getTracks().forEach((t) => t.stop());
+      if (!this.ended) this.end((e as Error).message || 'Could not start the call');
     }
   }
 
@@ -304,6 +310,16 @@ class VoiceCall {
     if (!captionId.startsWith('a-')) this.caption(`${captionId}-${Date.now()}`, 'assistant', clean, true);
   }
 
+  /**
+   * The approval prompt's first words are queued, not yet heard: earlier sentences may still be playing.
+   * A spoken yes answers the card only once the prompt has played to the end without being talked over.
+   */
+  private async bindWhenHeard(card: { approvalId: string; digest: string }) {
+    const gen = this.gen;
+    if (this.player.playing) await new Promise<void>((resolve) => { const t = setTimeout(resolve, 120_000); this.idleWaiters.push(() => { clearTimeout(t); resolve(); }); });
+    if (!this.ended && gen === this.gen && !this.player.playing) this.heardCard = card;
+  }
+
   private markSpokenToEnd() {
     for (const r of this.callRows()) {
       if (r.body.type !== 'message' || r.body.role !== 'assistant') continue;
@@ -345,7 +361,7 @@ class VoiceCall {
         const byVoice = !b.mail && !!this.sess?.approvalsByVoice && !!b.approvalId && !!b.digest;
         // Only once this card has actually been read out does a spoken yes or no answer it, and only it.
         const card = byVoice ? { approvalId: b.approvalId as string, digest: b.digest as string } : null;
-        this.say(`I need your OK to ${what}. ${byVoice ? 'Say yes to approve, or no to cancel.' : 'It is waiting for you on screen.'}`, 'approval', card ? () => { this.heardCard = card; } : undefined);
+        this.say(`I need your OK to ${what}. ${byVoice ? 'Say yes to approve, or no to cancel.' : 'It is waiting for you on screen.'}`, 'approval', card ? () => { void this.bindWhenHeard(card); } : undefined);
       } else if (b.type === 'card' && b.card === 'question' && b.status === 'pending' && !this.announcedCards.has(r.seq)) {
         this.announcedCards.add(r.seq);
         this.say(`${b.question} The choices are on screen, or just tell me.`, 'question');

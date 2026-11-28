@@ -1,4 +1,3 @@
-// Verbatim copy of server/src/reply-wait.ts (tests/reply-wait.mjs checks it). Change the server file, then copy.
 /**
  * What the app shows under the person's newest message while a reply is due (Android's Working bubble,
  * mobile/src/screens/Chat.tsx). Copied verbatim to mobile/src/replyWait.ts; tests/reply-wait.mjs checks both.

@@ -139,6 +139,12 @@ export interface MessageBody {
    * first and the message became the next turn. Shown as a small "Steering" marker.
    */
   steer?: 'pending' | 'read' | 'next';
+  /**
+   * A handoff between bots (bot-handoffs.ts). 'ask': the task as the answering bot's chat shows it.
+   * 'answer': the answering bot's reply, written word for word into the asking chat under its name
+   * (`from`). Shown "Answer to <askedBy>'s handoff" (kind 'mention': "Answer to your @mention"). Information only: never an approval.
+   */
+  handoff?: { id: string; role: 'ask' | 'answer'; askedBy?: string; kind?: 'ask' | 'mention' };
 }
 
 export interface ToolCallBody {
@@ -178,7 +184,17 @@ export type CardBody =
       risk?: string;
       /** A one-line warning for a risky tool, shown next to "Always allow". */
       alwaysNote?: string;
-      status: 'pending' | 'allowed' | 'always' | 'denied' | 'expired';
+      status: 'pending' | 'allowed' | 'always' | 'conversation' | 'denied' | 'expired';
+      /** "Allow for this conversation" is offered (conversation-allows.ts): wherever "Always allow" is, but mail, calls, browser cards and plans. */
+      canConversation?: boolean;
+      /** When the person turned off what this card allowed for the conversation (the line above the message box). */
+      convOff?: number;
+      /** The kind of action (action-kinds.ts: delete, send, share, post, pay, credentials), its short name and what it does. */
+      kind?: string;
+      kindName?: string;
+      kindSays?: string;
+      /** A hand-off: the person does it themselves (a password change on a website). "I did it myself" / "Don't do it". */
+      handoff?: boolean;
       /** Who answered, and from where ("web", "Windows app", "phone app", "voice call"). Absent on older cards. */
       answeredBy?: string;
       answeredVia?: string;
@@ -198,6 +214,8 @@ export type CardBody =
       purchase?: PurchaseOnCard;
       /** A needs-you card: a CAPTCHA, passkey or app approval the person does on the bot's screen. */
       screenHelp?: { reason: string; site: string; note: string };
+      /** A saved-login card (vault.ts): the owner's Sign in types a saved login into the bot's page. No values. */
+      vault?: VaultOnCard;
       /**
        * A posting plan card (posting.ts): every day's video, cover and posts, with a switch per day. The
        * answer carries the days left on (routes.ts /approvals/:id/plan).
@@ -327,6 +345,11 @@ export type CardBody =
        */
       quick?: boolean;
       auto?: boolean;
+      /**
+       * Check-in offer (checkin-offer.ts): the choice buttons offer to keep an eye on `subject`, and a tap makes
+       * a quiet routine for the bot instead of posting a chat message. Never an approval.
+       */
+      checkin?: { subject: string; focus?: string; link?: string; timezone?: string };
       /** Pinned board (board-pin.ts): kept in reach above the message box until it is done or let go. */
       pin?: { on: boolean; by: 'auto' | 'bot' | 'person'; at: number; doneAt?: number };
     }
@@ -426,9 +449,20 @@ export interface Routine {
   enabled: boolean; nextRunAt: number | null; lastRunAt: number | null; description: string;
   /** Post only when something is found: a run with nothing to report leaves no message in the chat. */
   quiet: boolean;
+  /** Failed runs in a row, and the last one's error (routines.ts, the fatigue rule). */
+  failCount?: number; lastError?: string | null;
+  /** Set when it switched itself off after 10 failures in a row; cleared when it is turned back on. */
+  autoOffAt?: number | null;
 }
 
-export interface Task { id: string; botId: string; title: string; state: 'working' | 'needs_input' | 'done'; note: string; updatedAt: number }
+export interface Task {
+  id: string; botId: string; title: string; state: 'working' | 'needs_input' | 'done'; note: string; updatedAt: number;
+  /** Marked "working" but untouched for hours while its bot is idle (store.ts taskStale). */
+  stale?: boolean;
+}
+
+/** A task the person deleted, whole, so the app's Undo can put it back exactly (POST /bots/<id>/tasks/restore). */
+export interface RemovedTask { id: string; title: string; state: Task['state']; note: string; createdAt: number; updatedAt: number }
 
 export interface Memory { id: string; botId: string; text: string; createdAt: number; source?: 'chat' | 'learned' }
 
@@ -458,6 +492,27 @@ export interface HermesSkillList {
   /** The bot saves its own skills without asking (hermes-gate.ts); only the owner changes it. */
   autoSave?: boolean; canChangeAutoSave?: boolean;
 }
+
+/** Teach a bot by showing it (server/src/teach.ts). */
+export type TeachStatus = 'recording' | 'drafting' | 'stopped' | 'ready' | 'saved' | 'discarded';
+export type TeachStepKind = 'page' | 'click' | 'type' | 'choose' | 'check' | 'press';
+/** One recorded step, already masked: a sensitive field has `sensitive` and never a `text`. */
+export interface TeachStep {
+  at: number; kind: TeachStepKind; name: string; role: string; origin: string;
+  url?: string; text?: string; checked?: boolean; sensitive?: boolean;
+}
+export interface TeachDraft { name: string; description: string; body: string }
+export interface TeachRecording {
+  id: string; botId: string; status: TeachStatus; steps: TeachStep[];
+  /** Each step in plain words, as the review shows it. */
+  lines: string[];
+  note: string; draft: TeachDraft | null; model: string | null;
+  /** Why the bot's model didn't write the draft (it was then written from the steps alone). */
+  error: string | null;
+  skillName: string | null; startedAt: number; stoppedAt: number | null;
+}
+/** GET /bots/:id/teach. `blocked`: why this bot can't be taught here, or null. */
+export interface TeachState { blocked: string | null; recording: TeachRecording | null }
 
 export interface LibraryFile { name: string; size: number; modifiedAt: number; isDir: boolean }
 
@@ -751,6 +806,8 @@ export interface PageBlock {
   [field: string]: unknown;
 }
 export interface Page { cleftPage: 1; id: string; title: string; version: number; blocks: PageBlock[]; updatedAt: number }
+/** GET /api/bots/:id/pages?path= : the Page, the chat its buttons send into (page-shelf.ts shelfInfo) and whether it is pinned. */
+export interface PageAnswer extends Page { sendTo: string; sendToTitle: string; pinned: boolean }
 export type PageOp = { op: string; [k: string]: any };
 export interface PageOpResult { ok: boolean; id?: string; item?: string; error?: string; conflict?: boolean; current?: unknown }
 /** One Page in a bot's Pages tab (page-shelf.ts). */
@@ -789,7 +846,29 @@ export interface SecretOnCard {
   masked: boolean;
   /** Digits only (codes, card numbers): the apps show a number pad. */
   numeric: boolean;
-  /** After Fill: filled, or why not. Never the value. */
+  /** The card offers "Save to my logins" (vault.ts): a sign-in field on a page saved logins can fill. */
+  canSave?: boolean;
+  /** After Fill: filled, or why not. Never the value. `saved` when it was also saved to the person's logins. */
+  result?: { ok: boolean; detail: string; at: number; saved?: boolean };
+}
+
+/** A saved-login card (vault.ts, browser-cards.ts useSavedLogin). Never carries a username or password. */
+export interface VaultOnCard {
+  /** The page's own origin and host, read from the browser. */
+  origin: string; site: string;
+  /** Set when the fields are inside a frame from another origin. */
+  frameOrigin?: string;
+  /** The saved login: its id, the site it was saved for, its label and a username hint ("a•••@example.com"). */
+  login: string; savedSite: string; label: string; userHint: string;
+  /** What will be typed, and the page's own labels for those fields. */
+  fields: ('username' | 'password')[]; fieldLabels: string[];
+  /** Whose login it is (first name), and whether that is a scoped sign-in (only that sign-in can press Sign in). */
+  owner: string; forScoped: boolean;
+  /** A mail, calendar or money site: the bots use connected apps there first. */
+  connectorFirst: boolean;
+  /** What the bot said it is for (its words). */
+  why: string;
+  /** After Sign in: which fields were filled, or why not. */
   result?: { ok: boolean; detail: string; at: number };
 }
 

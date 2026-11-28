@@ -645,6 +645,8 @@ async function startGateway(botId: string): Promise<void> {
       return;
     }
   }
+  // Not up: stop what was started, so it does not hold the port and block the next try.
+  if (child.pid) { try { process.kill(-child.pid, 'SIGTERM'); } catch { try { child.kill('SIGTERM'); } catch { /* gone */ } } }
   throw new Error('The agent did not come up within 90 seconds.');
 }
 

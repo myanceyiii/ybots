@@ -2,9 +2,10 @@ import { Pressable, View } from 'react-native';
 import { BotShape } from './BotAvatar';
 import { Label } from './ui';
 import { botColor, color, COLOR_ORDER, PICKER_SHAPES } from '../theme';
+import type { AvatarColor, AvatarShape } from '@shared/types';
 
 /** The shape grid (five across) and the colour row, shared by New bot and a bot's look. */
-export function ShapePicker({ shape, tint, onShape, onTint }: { shape: string; tint: string; onShape: (s: string) => void; onTint: (c: string) => void }) {
+export function ShapePicker({ shape, tint, onShape, onTint }: { shape: AvatarShape; tint: AvatarColor; onShape: (s: AvatarShape) => void; onTint: (c: AvatarColor) => void }) {
   return (
     <View>
       <Label>Shape</Label>

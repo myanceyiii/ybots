@@ -5,10 +5,11 @@ import * as Clipboard from 'expo-clipboard';
 import type { Bot, Client, Row } from '../api';
 import { BotAvatar, BotShape } from '../components/BotAvatar';
 import { ModelBadge, ModelBadgeInline, WithModelBadge } from '../components/ModelBadge';
-import { plainStep, useSimple } from '../simple';
+import { plainStep, useSimple, useScopedSignIn } from '../simple';
 import { celebrate, useBotPose, useLive } from '../live';
 import { KeyboardSafe, RevealFocused, useRevealOnFocus } from '../components/KeyboardSafe';
 import { BoardDock } from '../components/BoardDock';
+import { AllowedHere } from '../components/AllowedHere';
 import { ACTIVITY_LABEL, POSE_LABELS } from '../poses';
 import { Icon } from '../components/Icon';
 import { Markdown } from '../components/Markdown';
@@ -43,6 +44,7 @@ import { useBack } from '../back';
 import { appIcon, cardIcon, type IconData } from '../cardIcon';
 import { IconTile } from '../components/CardIcon';
 import { listen, listenAvailable, stopListening, useListening } from '../voice/listen';
+import { HANDOFF_HINT, handoffLabel } from '../handoffLabel';
 
 const time = (t: number) => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
@@ -127,13 +129,13 @@ export function Chat({ api, bot, bots, rows, onBack, onCall, onSettings, onCompu
   // The composer's text lives per bot (src/drafts.ts); this screen is keyed by bot in App.tsx.
   const [text, setTextState] = useState(() => getDraft(bot.id));
   const setText = useCallback((t: string) => { setTextState(t); setDraft(bot.id, t); }, [bot.id]);
-  // @ picker (groups only): typing @ lists the group's members; a tap puts "@Name " in the box.
+  // @ picker: typing @ lists the group's members (or, in a bot's own chat, the other bots); a tap puts "@Name " in the box.
   const members = useGroupMembers(api, bot);
   const [sel, setSel] = useState<{ start: number; end: number }>(() => ({ start: getDraft(bot.id).length, end: getDraft(bot.id).length }));
   // Set only for the render right after a pick, to move the cursor past the inserted name.
   const [forceSel, setForceSel] = useState<{ start: number; end: number } | undefined>();
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
-  const typed = isGroup && sel.start === sel.end ? mentionQuery(text, sel.start) : null;
+  const typed = (isGroup || members.list.length > 0) && sel.start === sel.end ? mentionQuery(text, sel.start) : null;
   const matches = typed && typed.start !== dismissedAt ? mentionMatches(members.list, typed.query) : [];
   // A new @ (or none) opens the list again after it was closed; each new @ fetches the members again.
   useEffect(() => {
@@ -262,6 +264,8 @@ export function Chat({ api, bot, bots, rows, onBack, onCall, onSettings, onCompu
         const last = items[items.length - 1];
         if (last?.kind === 'steps') last.rows.push(r);
         else items.push({ kind: 'steps', key: `s${r.generation}:${r.seq}`, createdAt: r.createdAt, rows: [r] });
+      } else if (answeredChoice(r)) {
+        continue;
       } else if ((t === 'message' && (r.body.text || r.body.streaming || r.body.attachments?.length)) || t === 'card' || (t === 'notice' && r.body.text)) {
         items.push({ kind: 'row', key: `${r.generation}:${r.seq}`, createdAt: r.createdAt, row: r });
       }
@@ -387,6 +391,8 @@ export function Chat({ api, bot, bots, rows, onBack, onCall, onSettings, onCompu
   // (until 2026-11-24 it stayed set, and every later visit opened halfway up, at an old notification's message).
   // A row that is already among the newest needs no scroll: the chat opens at the bottom, where it is.
   const focused = useRef<number | null>(null);
+  // The first row held when earlier rows were last asked for: asking again with nothing new loaded is a loop.
+  const triedFrom = useRef<number | null>(null);
   useEffect(() => {
     if (!focusSeq || focused.current === focusSeq || !rows.length) return;
     const i = list.findIndex((it) => (it.kind === 'row' && it.row.seq === focusSeq) || (it.kind === 'steps' && it.rows.some((r) => r.seq === focusSeq)));
@@ -395,10 +401,11 @@ export function Chat({ api, bot, bots, rows, onBack, onCall, onSettings, onCompu
       const newest = list.findIndex((it) => it.kind === 'row' || it.kind === 'steps');
       if (i > newest) setTimeout(() => listRef.current?.scrollToIndex({ index: i, viewPosition: 0.5, animated: true }), 50);
       onFocused?.();
-    } else if ((rows[0]?.seq ?? 1) > focusSeq && onEarlier && !earlier) {
+    } else if ((rows[0]?.seq ?? 1) > focusSeq && onEarlier && !earlier && triedFrom.current !== (rows[0]?.seq ?? 1)) {
+      triedFrom.current = rows[0]?.seq ?? 1;
       setEarlier(true);
       void Promise.resolve(onEarlier()).finally(() => setEarlier(false));
-    } else if (!earlier) { focused.current = focusSeq; onFocused?.(); }
+    } else if (!earlier) { focused.current = focusSeq; triedFrom.current = null; onFocused?.(); }
   }, [focusSeq, rows, earlier]);
 
   // A pinned board's Jump to message (BoardDock): scroll to its card in the chat.
@@ -576,6 +583,7 @@ export function Chat({ api, bot, bots, rows, onBack, onCall, onSettings, onCompu
         <Text style={[type.caption, { fontSize: 13, marginHorizontal: 20, marginTop: 6 }]}>The Slack link to {bot.name} is {bot.outside?.status === 'paused' ? 'paused' : 'offline'}. Messages can't be sent until it is back.</Text>
       )}
       <BoardDock api={api} bot={bot} bots={bots} rows={rows} onJump={jumpTo} />
+      <AllowedHere api={api} chatId={bot.id} rows={rows} />
       {editing && (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 16, marginTop: 6, paddingLeft: 12, paddingVertical: 6, paddingRight: 4, borderRadius: 16, backgroundColor: color.fill }}>
           <View style={{ alignSelf: 'stretch', width: 3, borderRadius: 2, backgroundColor: color.primary }} />
@@ -711,14 +719,22 @@ type Member = Pick<Bot, 'id' | 'name' | 'label' | 'avatarShape' | 'avatarColor'>
 function useGroupMembers(api: Client, bot: Bot): { list: Member[]; names: string[]; reload: () => void } {
   const [list, setList] = useState<Member[]>([]);
   const reload = useCallback(() => {
-    if (bot.kind !== 'room') return;
+    // A bot's own chat (or side chat): the other bots on the team; the server passes the message on to each
+    // one named (server/src/direct-mentions.ts). An outside bot's chat has no picker.
+    if (bot.kind !== 'room') {
+      if (bot.outside) { setList([]); return; }
+      api.bots().then((all) => setList(all.bots
+        .filter((b) => b.kind !== 'room' && b.id !== bot.id && b.name.toLowerCase() !== bot.name.toLowerCase())
+        .map((b) => ({ id: b.id, name: b.name, label: b.label, avatarShape: b.avatarShape, avatarColor: b.avatarColor, avatarImageUrl: b.avatarImageUrl, outside: b.outside } as Member)))).catch(() => {});
+      return;
+    }
     Promise.all([api.roomMembers(bot.id), api.bots().catch(() => null)]).then(([r, all]) => {
       setList(r.members.map((m) => {
         const full = all?.bots.find((b) => b.id === m.id);
         return { ...m, avatarImageUrl: full?.avatarImageUrl, outside: full?.outside } as Member;
       }));
     }).catch(() => {});
-  }, [api, bot.id, bot.kind]);
+  }, [api, bot.id, bot.kind, bot.name, bot.outside]);
   useEffect(reload, [reload]);
   const names = useMemo(() => list.map((m) => m.name), [list]);
   return { list, names, reload };
@@ -727,7 +743,7 @@ function useGroupMembers(api: Client, bot: Bot): { list: Member[]; names: string
 /** The group's members that fit the @name being typed, just above the message box. Tap one to put "@Name " in. */
 function MentionPicker({ api, matches, onPick, onClose }: { api: Client; matches: Member[]; onPick: (name: string) => void; onClose: () => void }) {
   return (
-    <View accessibilityRole="menu" accessibilityLabel="Group members" style={{ marginHorizontal: 16, marginTop: 6, paddingVertical: 4, borderRadius: 18, backgroundColor: color.surface, borderWidth: 1, borderColor: color.secondaryBorder, maxHeight: 248, overflow: 'hidden' }}>
+    <View accessibilityRole="menu" accessibilityLabel="Bots to mention" style={{ marginHorizontal: 16, marginTop: 6, paddingVertical: 4, borderRadius: 18, backgroundColor: color.surface, borderWidth: 1, borderColor: color.secondaryBorder, maxHeight: 248, overflow: 'hidden' }}>
       <ScrollView keyboardShouldPersistTaps="always">
         {matches.map((m) => (
           <Pressable key={m.id} accessibilityRole="menuitem" accessibilityLabel={`Mention ${m.name}`} onPress={() => onPick(m.name)}
@@ -748,7 +764,16 @@ function MentionPicker({ api, matches, onPick, onClose }: { api: Client; matches
 
 /** Your own messages (typed or spoken) are the black bubbles on the right. */
 /** A bot's (or a card's) row: what "new" counts (the same rule as the web's Transcript). */
-const isIncoming = (r: Row) => (r.body.type === 'message' ? (r.body.role === 'assistant' || (!!r.body.from && r.body.from.kind !== 'voice')) && !r.body.streaming : r.body.type === 'card');
+/**
+ * Answered choice buttons (server/src/choices.ts) leave the chat: the tap already put the answer in the chat
+ * as your message, so a second "✓ answer" chip above it only repeated it. Same rule on the web and Windows
+ * apps (web/src/components/Transcript.tsx answeredChoice).
+ */
+const answeredChoice = (r: Row) => {
+  const b: any = r.body;
+  return b.type === 'card' && b.card === 'view' && !!b.quick && b.blocks?.[0]?.type === 'choice' && !!b.blocks[0].sentAt;
+};
+const isIncoming = (r: Row) => !answeredChoice(r) && (r.body.type === 'message' ? (r.body.role === 'assistant' || (!!r.body.from && r.body.from.kind !== 'voice')) && !r.body.streaming : r.body.type === 'card');
 
 /** The line above the first message that arrived while you were away. */
 function NewLine() {
@@ -961,6 +986,7 @@ function RowView({ api, bot, ownerId, bots, row, onPluginCode, onFiles, onReply,
         {(!!b.text || b.streaming || !b.attachments?.length) && <View style={b.editedTo ? { opacity: 0.55 } : undefined}><Bubble mine={mine} text={b.text || '…'} from={source} names={names} ink={ink} /></View>}
         <Citations list={b.citations} />
         {!b.streaming && <Text style={[type.time, { alignSelf: mine ? 'flex-end' : 'flex-start', marginTop: 3, marginHorizontal: 6 }]}>{b.from?.kind === 'voice' ? 'Spoken · ' : ''}{time(row.createdAt)}{b.editedTo ? ' · Edited, new version below' : b.editOf ? ' · Edited' : ''}</Text>}
+        {!!handoffLabel(b.handoff) && <Text accessibilityHint={HANDOFF_HINT} style={[type.time, { alignSelf: mine ? 'flex-end' : 'flex-start', marginTop: 1, marginHorizontal: 6, color: color.inkMuted, fontWeight: '600' }]}>↩ {handoffLabel(b.handoff)}</Text>}
         {!!b.steer && STEER_LABEL[b.steer as keyof typeof STEER_LABEL] && <Text accessibilityHint="Sent while the bot was working. It is never an approval." style={[type.time, { alignSelf: mine ? 'flex-end' : 'flex-start', marginTop: 1, marginHorizontal: 6, color: b.steer === 'pending' ? color.timestamp : color.inkMuted, fontStyle: b.steer === 'pending' ? 'italic' : 'normal', fontWeight: '600' }]}>↪ {STEER_LABEL[b.steer as keyof typeof STEER_LABEL]}</Text>}
       </View>
     );
@@ -971,8 +997,9 @@ function RowView({ api, bot, ownerId, bots, row, onPluginCode, onFiles, onReply,
     if (mine || b.streaming || !b.text?.trim() || !onReply) return b.reactions?.length ? <View>{bubble}<ReactionChips reactions={b.reactions} mine={mine} /></View> : bubble;
     return <BotMessage api={api} bot={bot} row={row} bubble={bubble} onReply={onReply} voiceBot={b.from?.kind === 'bot' ? b.from.id : ownerId} />;
   }
-  if (b.type === 'card' && b.card === 'approval' && b.postingPlan) return <PostingPlanCard api={api} bot={bot} body={b} />;
+  if (b.type === 'card' && b.card === 'approval' && b.postingPlan) return <PostingPlanCard api={api} bot={bot} ownerId={ownerId} body={b} />;
   if (b.type === 'card' && b.card === 'approval' && b.secret) return <SecretCard api={api} body={b} />;
+  if (b.type === 'card' && b.card === 'approval' && b.vault) return <VaultCard api={api} body={b} />;
   if (b.type === 'card' && b.card === 'approval' && b.purchase) return <PurchaseCard api={api} body={b} />;
   if (b.type === 'card' && b.card === 'approval' && b.screenHelp) return <ScreenHelpCard api={api} body={b} onComputer={onComputer} />;
   if (b.type === 'card' && b.card === 'approval') return <ApprovalCard api={api} body={b} />;
@@ -985,7 +1012,7 @@ function RowView({ api, bot, ownerId, bots, row, onPluginCode, onFiles, onReply,
   if (b.type === 'card' && b.card === 'plugin-plan') return <PluginPlanCard api={api} body={b} />;
   if (b.type === 'card' && b.card === 'plugin-review') return <PluginReviewCard api={api} body={b} onCode={onPluginCode} />;
   if (b.type === 'card' && b.card === 'plugin') return <PluginView body={b} />;
-  if (b.type === 'card' && b.card === 'files') return <FileChips files={b.files ?? []} onOpen={(p) => onFiles?.(p)} onDownload={bot.outside ? undefined : (p) => downloadToPhone(api, bot.id, p).then(() => undefined, (e: any) => { Alert.alert('Couldn’t download it', e?.message ?? 'Something went wrong.'); })} />;
+  if (b.type === 'card' && b.card === 'files') return <FileChips files={b.files ?? []} onOpen={(p) => onFiles?.(p)} onDownload={bot.outside ? undefined : (p) => downloadToPhone(api, ownerId, p).then(() => undefined, (e: any) => { Alert.alert('Couldn’t download it', e?.message ?? 'Something went wrong.'); })} />;
   if (b.type === 'card' && b.card === 'view') return <ViewCard api={api} bot={bot} row={row} onOpenPage={onFiles ? (p) => onFiles(p) : undefined} />;
   if (b.type === 'card') return (
     <CardShell title={b.title ?? 'A card from ' + bot.name}>
@@ -1005,15 +1032,15 @@ function ApprovalCard({ api, body }: { api: Client; body: any }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const pending = body.status === 'pending';
-  const decide = async (decision: 'allow' | 'always' | 'deny') => {
+  const decide = async (decision: 'allow' | 'always' | 'conversation' | 'deny') => {
     if (!body.digest) { setNote('This card is too old to answer. Ask for a new card.'); return; }
     setBusy(true);
     setNote(null);
     try {
       const { approval } = await api.approve(body.approvalId, decision, body.digest);
       tap(decision === 'deny' ? 'light' : 'success');
-      const said = body.mail ? (approval.status === 'denied' ? 'Not sent' : 'Sending') : approval.status === 'always' ? 'Always allowed' : approval.status === 'allowed' ? 'Allowed' : 'Not allowed';
-      setNote(`${said} at ${time(approval.resolvedAt ?? Date.now())}${approval.status === 'always' ? '. Undo it in this bot\'s settings.' : ''}`);
+      const said = body.mail ? (approval.status === 'denied' ? 'Not sent' : 'Sending') : body.handoff ? (approval.status === 'denied' ? 'Not done' : 'Done by you') : approval.status === 'always' ? 'Always allowed' : approval.status === 'conversation' ? 'Allowed for this conversation' : approval.status === 'allowed' ? 'Allowed' : 'Not allowed';
+      setNote(`${said} at ${time(approval.resolvedAt ?? Date.now())}${approval.status === 'always' ? '. Undo it in this bot\'s settings.' : approval.status === 'conversation' ? '. Turn it off above the message box.' : ''}`);
     } catch (e: any) {
       setNote(e?.data?.code === 'not_rememberable' || e?.data?.code === 'agent_session' ? e.message : e?.data?.approval ? `Nothing changed: already ${e.data.approval.status}.` : e?.message ?? 'Something went wrong.');
     } finally { setBusy(false); }
@@ -1021,11 +1048,22 @@ function ApprovalCard({ api, body }: { api: Client; body: any }) {
   const mail = body.mail;
   const done = mail
     ? body.status === 'denied' ? 'Not sent' : body.status === 'expired' ? 'Expired, not sent' : body.sendResult ? (body.sendResult.ok ? 'Sent' : `Send failed: ${body.sendResult.detail}`) : 'Send pressed'
-    : { allowed: 'Allowed', always: 'Always allowed', denied: 'Not allowed', expired: 'Expired' }[body.status as string];
+    : body.handoff ? { allowed: 'You did it yourself', denied: 'Not done', expired: 'Expired' }[body.status as string]
+    : body.status === 'conversation' && body.convOff ? 'Allowed for this conversation, then turned off'
+    : { allowed: 'Allowed', always: 'Always allowed', conversation: 'Allowed for this conversation', denied: 'Not allowed', expired: 'Expired' }[body.status as string];
   const tools: string[] = body.tools ?? [];
   const many = tools.length > 1;
+  const handoff = !!body.handoff;
   return (
     <CardShell title={body.title} icon={cardIcon(body)} sub={appLine(body)}>
+      {!!body.kindName && !mail && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <View style={{ paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10, backgroundColor: color.fill }}>
+            <Text style={{ fontSize: 13, fontWeight: '600', color: color.ink }}>{body.kindName}</Text>
+          </View>
+          {!!body.kindSays && !handoff && !String(body.detail ?? '').includes(body.kindSays) && <Text style={[type.caption, { flexShrink: 1 }]}>{body.kindSays}</Text>}
+        </View>
+      )}
       {!!mail && <MailView mail={mail} />}
       {many && !mail && (
         <Text selectable style={{ fontSize: 16, lineHeight: 23, color: color.ink }}>
@@ -1041,17 +1079,21 @@ function ApprovalCard({ api, body }: { api: Client; body: any }) {
       {pending ? (
         <View style={{ gap: 8 }}>
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            <PillButton title={mail ? 'Send' : 'Allow once'} disabled={busy} onPress={() => decide('allow')} style={{ flex: 1 }} />
-            <PillButton title={mail ? 'Don\'t send' : 'Deny'} kind="secondary" disabled={busy} onPress={() => decide('deny')} style={{ flex: 1 }} />
+            <PillButton title={mail ? 'Send' : handoff ? 'I did it myself' : 'Allow once'} disabled={busy} onPress={() => decide('allow')} style={{ flex: 1 }} />
+            <PillButton title={mail ? 'Don\'t send' : handoff ? 'Don\'t do it' : 'Deny'} kind="secondary" disabled={busy} onPress={() => decide('deny')} style={{ flex: 1 }} />
           </View>
-          {body.canAlways === true && !mail && (
+          {/* "Allow for this conversation" (server/src/conversation-allows.ts): only where the server offered it. */}
+          {body.canAlways === true && body.canConversation === true && !mail && !handoff && (
+            <PillButton title="Allow for this conversation" kind="secondary" disabled={busy} onPress={() => decide('conversation')} />
+          )}
+          {body.canAlways === true && !mail && !handoff && (
             <PillButton title={many ? 'Always allow all' : 'Always allow'} kind="secondary" disabled={busy} onPress={() => decide('always')} />
           )}
           {!!body.alwaysNote && <Text style={[type.caption, { color: color.danger }]}>⚠ {body.alwaysNote}</Text>}
         </View>
       ) : (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          {(body.status === 'allowed' || body.status === 'always') && (!mail || body.sendResult?.ok) && <Icon name="check" size={16} color={color.inkMuted} />}
+          {(body.status === 'allowed' || body.status === 'always' || body.status === 'conversation') && (!mail || body.sendResult?.ok) && <Icon name="check" size={16} color={color.inkMuted} />}
           <Text style={type.caption}>{done ?? body.status}{body.answeredBy && body.status !== 'expired' ? ` by ${body.answeredBy}${body.answeredVia ? ` · ${body.answeredVia}` : ''}` : ''}</Text>
         </View>
       )}
@@ -1093,6 +1135,7 @@ function SecretCard({ api, body }: { api: Client; body: any }) {
   const s = body.secret;
   const [value, setValue] = useState('');
   const [show, setShow] = useState(false);
+  const [save, setSave] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   // While typing, the bot's reason folds to two lines so the field and its buttons fit above the keyboard.
@@ -1103,7 +1146,7 @@ function SecretCard({ api, body }: { api: Client; body: any }) {
     if (!value || !body.digest) return;
     const v = value;
     setValue(''); setBusy(true); setNote(null);
-    try { await api.secretInput(body.approvalId, v, body.digest); setNote('Sent to the page.'); }
+    try { await api.secretInput(body.approvalId, v, body.digest, save && !!s.canSave); setNote('Sent to the page.'); }
     catch (e: any) { setNote(e?.data?.approval ? `Nothing changed: already ${e.data.approval.status}.` : e?.message ?? 'Something went wrong.'); }
     finally { setBusy(false); }
   };
@@ -1135,6 +1178,12 @@ function SecretCard({ api, body }: { api: Client; body: any }) {
               </Pressable>
             )}
           </View>
+          {!!s.canSave && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Switch value={save} onValueChange={setSave} disabled={busy} accessibilityLabel={`Save to my logins for ${s.site}`} />
+              <Text style={[type.caption, { flex: 1, color: color.ink }]}>Save to my logins for {s.site}</Text>
+            </View>
+          )}
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <PillButton title="Fill in" disabled={busy || !value} onPress={fill} style={{ flex: 1 }} />
             <PillButton title="Don't fill" kind="secondary" disabled={busy} onPress={deny} style={{ flex: 1 }} />
@@ -1152,6 +1201,57 @@ function SecretCard({ api, body }: { api: Client; body: any }) {
   );
 }
 
+/**
+ * A saved-login card (server/src/vault.ts), as on the web: a bot asks to sign in with a login someone saved.
+ * Only that person's sign-in gets Sign in (the server checks too); the server types it into the page.
+ */
+function VaultCard({ api, body }: { api: Client; body: any }) {
+  const v = body.vault;
+  const scoped = useScopedSignIn();
+  const mine = !!v.forScoped === scoped;
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const pending = body.status === 'pending';
+  const act = async (f: () => Promise<unknown>) => {
+    if (!body.digest) return;
+    setBusy(true); setNote(null);
+    try { await f(); } catch (e: any) { setNote(e?.data?.approval ? `Nothing changed: already ${e.data.approval.status}.` : e?.message ?? 'Something went wrong.'); } finally { setBusy(false); }
+  };
+  const what = v.fields.length === 2 ? 'username and password' : v.fields[0];
+  const done = body.status === 'denied' ? 'Not signed in' : body.status === 'expired' ? 'Expired' : v.result ? (v.result.ok ? v.result.detail : `Not filled: ${v.result.detail}`) : 'Filling…';
+  return (
+    <CardShell title={body.title} icon={cardIcon(body)}>
+      <SiteLine origin={v.origin} frameOrigin={v.frameOrigin} />
+      <CardRow label="Login" value={`${v.label}${v.userHint ? ` · ${v.userHint}` : ''}${v.savedSite !== v.site ? ` (saved for ${v.savedSite})` : ''}`} />
+      <CardRow label="Fills" value={`The ${what}${v.fieldLabels?.length ? ` ("${v.fieldLabels.join('", "')}")` : ''}`} />
+      {!!v.why && <CardRow label="For" value={`${v.why} (the bot's words)`} />}
+      {!!v.connectorFirst && <Text style={[type.caption, { color: color.danger }]}>This is a mail, calendar or money site. Bots use the connected app for this. Sign in only if no connected app covers it, not because one failed.</Text>}
+      {pending ? (
+        <View style={{ gap: 8 }}>
+          {mine ? (
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <PillButton title="Sign in" disabled={busy} onPress={() => act(() => api.useSavedLogin(body.approvalId, body.digest))} style={{ flex: 1 }} />
+              <PillButton title="Don't sign in" kind="secondary" disabled={busy} onPress={() => act(() => api.approve(body.approvalId, 'deny', body.digest))} style={{ flex: 1 }} />
+            </View>
+          ) : (
+            <>
+              <Text style={type.caption}>This is {v.owner}'s login. Only {v.owner} can press Sign in.</Text>
+              <PillButton title="Don't sign in" kind="secondary" disabled={busy} onPress={() => act(() => api.approve(body.approvalId, 'deny', body.digest))} />
+            </>
+          )}
+          <Text style={type.caption}>The app types it into the page. The bot never sees it.</Text>
+        </View>
+      ) : (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          {body.status === 'allowed' && v.result?.ok !== false && <Icon name="check" size={16} color={color.inkMuted} />}
+          <Text style={type.caption}>{done}{answeredLine(body)}</Text>
+        </View>
+      )}
+      {note && <Text style={type.caption}>{note}</Text>}
+    </CardShell>
+  );
+}
+
 const PLATFORM_NAME: Record<string, string> = { facebook: 'Facebook', instagram: 'Instagram', youtube: 'YouTube', x: 'X', tiktok: 'TikTok', linkedin: 'LinkedIn', threads: 'Threads' };
 const planDay = (date: string) => new Date(`${date}T12:00:00Z`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
 
@@ -1159,7 +1259,7 @@ const planDay = (date: string) => new Date(`${date}T12:00:00Z`).toLocaleDateStri
  * A posting plan card (server/src/posting.ts), as on the web: each day's video, cover and posts with a switch
  * per day; one press approves exactly the days left on. Tap a post to read its whole caption.
  */
-function PostingPlanCard({ api, bot, body }: { api: Client; bot: Bot; body: any }) {
+function PostingPlanCard({ api, bot, ownerId, body }: { api: Client; bot: Bot; ownerId: string; body: any }) {
   const plan = body.postingPlan;
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(plan.days.map((d: any) => [d.date, true])));
   const [open, setOpen] = useState<string | null>(null);
@@ -1193,7 +1293,7 @@ function PostingPlanCard({ api, bot, body }: { api: Client; bot: Bot; body: any 
               <Text style={{ flex: 1, fontSize: 16, color: color.ink }}><Text style={{ fontWeight: '700' }}>{planDay(d.date)}</Text>{d.label ? ` · ${d.label}` : ''}</Text>
             </View>
             <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
-              {d.cover?.ok && <Image source={{ uri: api.fileRawUrl(bot.id, d.cover.path), headers: api.authHeader }} style={{ width: 40, height: 70, borderRadius: 6, backgroundColor: color.surface }} />}
+              {d.cover?.ok && <Image source={{ uri: api.fileRawUrl(ownerId, d.cover.path), headers: api.authHeader }} style={{ width: 40, height: 70, borderRadius: 6, backgroundColor: color.surface }} />}
               <View style={{ flex: 1 }}>
                 {d.video && <Text style={type.caption}>🎬 {d.video.name}{d.video.ok ? ` · ${(d.video.size / 1e6).toFixed(1)} MB` : ''}</Text>}
                 {d.cover && <Text style={type.caption}>🖼 {d.cover.name}</Text>}

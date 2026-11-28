@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bookmark, Check, Copy, ExternalLink, FileText, Pin, PinOff, Send } from 'lucide-react';
+import { Bookmark, Check, Copy, ExternalLink, Eye, FileText, Pin, PinOff, Send } from 'lucide-react';
 import type { CardBody, Row, ViewBlock } from '@shared/types';
 import { CHART_DARK, CHART_LIGHT, chartSvg } from '@shared/page-chart';
 import { useConfigUI, useIsDark } from '../../configStore';
@@ -8,6 +8,7 @@ import { openFile } from '../files/FilePane';
 import { safeUrl } from '@shared/plugins/ui-schema';
 import { api } from '../../lib/api';
 import { Markdown } from '../Markdown';
+import { A2uiView } from './A2uiView';
 
 /**
  * An answer view in the chat (server/src/views.ts): tables, charts, stats, checklists, picks, forms and
@@ -63,6 +64,8 @@ export function ViewCard({ row, body, docked }: { row: Row; body: Card; docked?:
       </div>
     );
   }
+  // Check-in offer (server/src/checkin-offer.ts): the same buttons with a heading; a tap makes the check-in.
+  if (body.quick && body.checkin && body.blocks[0]?.type === 'choice') return <CheckInOffer body={body} b={body.blocks[0] as B} change={change} error={error} />;
   if (body.quick && body.blocks[0]?.type === 'choice') return <QuickChoices b={body.blocks[0] as B} group={!!body.from} change={change} error={error} />;
   return (
     <div className={`card view-card${pinned ? ' is-pinned' : ''}`} data-seq={row.seq}>
@@ -157,6 +160,7 @@ function ViewBlockView({ b, all, change }: { b: B; all: ViewBlock[]; change: (c:
     case 'code': return <pre className="files-text is-code">{b.code}</pre>;
     case 'calc': return <ViewCalc b={b} change={change} />;
     case 'divider': return <hr className="page-hr" />;
+    case 'a2ui': return <A2uiView b={b as any} change={change} />;
     default: return null;
   }
 }
@@ -369,9 +373,34 @@ function CalcField({ i, value, onChange }: { i: CalcInput; value: number; onChan
 
 /**
  * Choice buttons (server/src/choices.ts): a row of answers under the bot's reply, no card around them.
- * A tap sends that answer as your message; then the row shows what was picked (and who, in a group) and
- * can't be pressed again. "Other" opens a box for your own words. Never an approval: it's a chat reply.
+ * A tap sends that answer as your message, and the chat then hides the row (Transcript / Chat answeredChoice),
+ * so the answer shows once. The picked state below is only a fallback for other places a card is drawn. "Other" opens a box for your own words. Never an approval: it's a chat reply.
  */
+/**
+ * "Keep an eye on X?" (server/src/checkin-offer.ts): how often, or Not now. A tap only makes a check-in that
+ * reads and posts when something needs you; it posts no message and approves nothing. Android draws the same
+ * card (mobile/src/components/ViewCard.tsx).
+ */
+function CheckInOffer({ body, b, change, error }: { body: Card; b: B; change: (c: Change) => Promise<boolean>; error: string | null }) {
+  const o = body.checkin!;
+  const who = body.from?.name ?? 'Your Bot';
+  return (
+    <div className="checkin-offer" data-checkin-offer>
+      <div className="checkin-offer__head">
+        <span className="checkin-offer__icon" aria-hidden><Eye size={16} /></span>
+        <div className="checkin-offer__text">
+          <div className="checkin-offer__title">{b.question}</div>
+          <div className="checkin-offer__sub">
+            {body.from ? `${who} reads` : 'Reads'} it on a schedule and tells you when something there needs you. It only reads, never changes anything.
+            {o.link && safeUrl(o.link) && <> <a href={safeUrl(o.link)!} target="_blank" rel="noreferrer">Open <ExternalLink size={11} aria-hidden /></a></>}
+          </div>
+        </div>
+      </div>
+      <QuickChoices b={b} group={!!body.from} change={change} error={error} />
+    </div>
+  );
+}
+
 function QuickChoices({ b, group, change, error }: { b: B; group: boolean; change: (c: Change) => Promise<boolean>; error: string | null }) {
   const sent = !!b.sentAt;
   const [busy, setBusy] = useState<number | 'other' | null>(null);

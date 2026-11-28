@@ -317,6 +317,8 @@ function onRows(userId: string, chatId: string, rows: Row[]) {
       // buttons when there are three or fewer. Once answered, the notice comes down.
       const c = b.blocks[0] as any;
       if (!c || c.type !== 'choice') continue;
+      // A check-in offer (checkin-offer.ts) is not a question: the reply's own notice stays.
+      if (b.checkin) continue;
       if (c.sentAt) { clear(userId, [`chat:${botId}`]); continue; }
       const who = b.from?.name ?? bot.name;
       openChats.add(botId);

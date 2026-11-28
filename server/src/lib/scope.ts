@@ -4,6 +4,8 @@ import { db } from '../db.js';
 import type { ServerEvent } from '../types.js';
 import { ownerName } from '../people.js';
 
+const safeDecode = (v: string): string | undefined => { try { return decodeURIComponent(v); } catch { return undefined; } };
+
 /**
  * A scoped sign-in (SCOPED_PEOPLE in .env): a person who shares the account but sees only some bots.
  * Sam signs in to the shared team account and should see only Robin, not Leonard, Howard, Sheldon or
@@ -58,10 +60,13 @@ const SIDE_ROUTE = new RegExp(`^/api/side-chats/${id}(?:/.*)?$`);
 const ROUTINE_ROUTE = new RegExp(`^/api/routines/${id}(?:/.*)?$`);
 const MEMORY_ROUTE = new RegExp(`^/api/memories/${id}$`);
 // `/secret`: the value typed into a secure input card (browser-cards.ts), which is that card's answer.
-const APPROVAL_ROUTE = new RegExp(`^/api/approvals/${id}(?:/secret)?$`);
+// `/login`: Sign in on a saved-login card (vault.ts checks it is this person's own login).
+const APPROVAL_ROUTE = new RegExp(`^/api/approvals/${id}(?:/secret|/login)?$`);
 /** "Always allow" rules: a scoped person sees and removes (never adds) the rules of their own bot. */
 const ALLOW_RULE_ROUTE = new RegExp(`^/api/allow-rules/${id}$`);
 const OPEN = new Set(['/api/bots', '/api/events', '/api/tasks', '/api/notify/stream', '/api/notify/prefs', '/api/notify/recent',
+  // The Needs you board (needs-you.ts) lists only the items of the bots the session can see.
+  '/api/needs-you',
   // Search answers only from the chats the session can see (chat-extras.ts); the version line names no bot.
   '/api/search', '/api/version',
   // Download my data gives a scoped person only the bots they can see (account-export.ts).
@@ -71,7 +76,10 @@ const OPEN = new Set(['/api/bots', '/api/events', '/api/tasks', '/api/notify/str
   // The Windows app's update check (desktop-updates.ts): the same answer for everyone, nothing about any bot.
   '/api/desktop/latest']);
 /** Changes to the team itself are not a scoped person's to make, even on their own bot. */
-const TEAM_CHANGES = [/^\/api\/bots\/[^/]+\/primary$/, /^\/api\/bots\/[^/]+\/engine\/(login|restart)$/, /^\/api\/bots\/[^/]+\/helpers$/];
+// Also the owner's own safety switches (free-run, the publish hold, skill auto-save) and the bot's engine:
+// those routes check isOwner(), which a scoped person passes because they sign in to the owner's account.
+const TEAM_CHANGES = [/^\/api\/bots\/[^/]+\/primary$/, /^\/api\/bots\/[^/]+\/engine(?:\/(?:login|restart))?$/, /^\/api\/bots\/[^/]+\/helpers$/,
+  /^\/api\/bots\/[^/]+\/(?:free-terminal|publish-guard)$/, /^\/api\/bots\/[^/]+\/hermes-skills\/auto-save$/];
 
 /** Why a scoped session may not make this request, or null when it may. */
 export async function scopeRefusal(c: Context, scope: Scope): Promise<string | null> {
@@ -79,6 +87,8 @@ export async function scopeRefusal(c: Context, scope: Scope): Promise<string | n
   const method = c.req.method;
   const refuse = 'Not available on this sign-in.';
   if (OPEN.has(path)) return path === '/api/bots' && method !== 'GET' ? refuse : null;
+  // Saved logins (vault.ts): every handler works only on the signed-in person's own logins.
+  if (path === '/api/vault/logins' || /^\/api\/vault\/logins\/[^/]+$/.test(path)) return null;
   // A phone's answer to a timer or alarm it was sent (phone.ts); the route checks the action's bot against the scope.
   if (method === 'POST' && /^\/api\/phone\/actions\/[^/]+\/result$/.test(path)) return null;
   if (method === 'GET' && path.startsWith('/api/desktop/download/')) return null;
@@ -91,7 +101,7 @@ export async function scopeRefusal(c: Context, scope: Scope): Promise<string | n
   }
   let m = BOT_ROUTE.exec(path);
   if (m) {
-    if (!scope.bots.has(decodeURIComponent(m[1]))) return refuse;
+    if (!scope.bots.has(safeDecode(m[1]) ?? '')) return refuse;
     if (method === 'DELETE' && path.split('/').length === 4) return refuse;
     if (method !== 'GET' && TEAM_CHANGES.some((r) => r.test(path))) return refuse;
     // The scope finds the bot by its name (SCOPED_PEOPLE=addr=BotName), so renaming it would hide it from this
@@ -100,12 +110,12 @@ export async function scopeRefusal(c: Context, scope: Scope): Promise<string | n
       const body = await c.req.json<{ name?: unknown; ownerHidden?: unknown }>().catch(() => ({} as { name?: unknown; ownerHidden?: unknown }));
       // Hiding a bot is the owner's own view (Alex hid a bot): not this sign-in's to change.
       if (body && typeof body === 'object' && body.ownerHidden !== undefined) return refuse;
-      const was = (db.prepare('SELECT name FROM bots WHERE id=?').get(decodeURIComponent(m[1])) as { name?: string } | undefined)?.name;
+      const was = (db.prepare('SELECT name FROM bots WHERE id=?').get(safeDecode(m[1]) ?? '') as { name?: string } | undefined)?.name;
       if (body && typeof body === 'object' && typeof body.name === 'string' && body.name.trim() !== String(was ?? '').trim()) return `Only ${ownerName()} can rename this bot.`;
     }
     return null;
   }
-  if ((m = SIDE_ROUTE.exec(path))) return scope.bots.has(decodeURIComponent(m[1])) ? null : refuse;
+  if ((m = SIDE_ROUTE.exec(path))) return scope.bots.has(safeDecode(m[1]) ?? '') ? null : refuse;
   if ((m = ROUTINE_ROUTE.exec(path))) return ownedBy('routines', m[1], scope) ? null : refuse;
   if ((m = MEMORY_ROUTE.exec(path))) return ownedBy('memories', m[1], scope) ? null : refuse;
   if ((m = APPROVAL_ROUTE.exec(path))) return ownedBy('approvals', m[1], scope) ? null : refuse;
@@ -117,7 +127,7 @@ export async function scopeRefusal(c: Context, scope: Scope): Promise<string | n
 
 function ownedBy(table: 'routines' | 'memories' | 'approvals' | 'allow_rules', rowId: string, scope: Scope): boolean {
   try {
-    const r = db.prepare(`SELECT bot_id FROM ${table} WHERE id=?`).get(decodeURIComponent(rowId)) as { bot_id: string } | undefined;
+    const r = db.prepare(`SELECT bot_id FROM ${table} WHERE id=?`).get(safeDecode(rowId) ?? '') as { bot_id: string } | undefined;
     return !!r && scope.bots.has(r.bot_id);
   } catch { return false; }
 }

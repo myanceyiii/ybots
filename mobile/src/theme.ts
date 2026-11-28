@@ -3,6 +3,7 @@ import Constants from 'expo-constants';
 import { useEffect, useState } from 'react';
 import { Appearance, useColorScheme } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
+import type { AvatarColor, AvatarShape } from '@shared/types';
 
 export const appName = 'YBots';
 
@@ -165,5 +166,5 @@ export const botColor: Record<string, string> = {
   cyan: '#13B7A2', blue: '#1E86FC', violet: '#8F59F9', magenta: '#F93498', gray: '#959595',
 };
 
-export const PICKER_SHAPES = ['blob', 'cloud', 'square', 'sparkle', 'clover', 'heart', 'flower', 'teardrop', 'tablet', 'wedge', 'house', 'star', 'hex'];
-export const COLOR_ORDER = ['black', 'brown', 'red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'violet', 'magenta', 'gray'];
+export const PICKER_SHAPES: AvatarShape[] = ['blob', 'cloud', 'square', 'sparkle', 'clover', 'heart', 'flower', 'teardrop', 'tablet', 'wedge', 'house', 'star', 'hex'];
+export const COLOR_ORDER: AvatarColor[] = ['black', 'brown', 'red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'violet', 'magenta', 'gray'];

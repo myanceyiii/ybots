@@ -236,3 +236,17 @@
 .clip-box__btn.is-primary { background: var(--bot-action, #FFFFFF); color: var(--bot-on-action, #111111); }
 .clip-box__btn:disabled { opacity: 0.5; }
 .screen__chin-icon:disabled { opacity: 0.5; }
+
+/* Teach a bot: Record / Stop beside Hand back (components/TeachRecord.tsx) */
+.teach-rec {
+  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; flex-shrink: 0; border-radius: var(--radius-full);
+  background: transparent; color: inherit; border: 1px solid currentColor; font-size: 13px; font-weight: 600; line-height: 18px; white-space: nowrap;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent; opacity: 0.92;
+}
+.teach-rec:hover { opacity: 1; }
+.teach-rec:disabled { opacity: 0.5; }
+.teach-rec.is-on { background: #D93025; border-color: #D93025; color: #FFFFFF; opacity: 1; }
+.teach-rec__dot { width: 10px; height: 10px; border-radius: 2px; background: #FFFFFF; animation: teach-pulse 1.4s ease-in-out infinite; }
+.teach-rec__error { font-size: 12px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #FFB4AB; }
+@keyframes teach-pulse { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .teach-rec__dot { animation: none; } }

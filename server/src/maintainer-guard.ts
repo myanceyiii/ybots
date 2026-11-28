@@ -87,15 +87,15 @@ const CARRIER_ONLY = /via (-e\/-c|-c\/-lc) flag|via heredoc|^execute_code$/i;
 const READ_ANY = new Set([
   'cd', 'ls', 'll', 'cat', 'head', 'tail', 'less', 'more', 'wc', 'grep', 'egrep', 'fgrep', 'rg', 'stat', 'file', 'du', 'df',
   'free', 'uptime', 'hostname', 'hostnamectl', 'whoami', 'id', 'groups', 'date', 'uname', 'which', 'type', 'pwd', 'echo',
-  'sort', 'uniq', 'cut', 'tr', 'jq', 'yq', 'column', 'nl', 'tree', 'realpath', 'readlink', 'basename', 'dirname', 'lsblk',
+  'cut', 'tr', 'jq', 'yq', 'column', 'nl', 'realpath', 'readlink', 'basename', 'dirname', 'lsblk',
   'lscpu', 'lsusb', 'lspci', 'nproc', 'sensors', 'vmstat', 'iostat', 'mpstat', 'last', 'w', 'who', 'getent', 'dig',
   'nslookup', 'host', 'ping', 'ps', 'pgrep', 'pstree', 'ss', 'netstat', 'lsof', 'diff', 'cmp', 'md5sum', 'sha256sum',
-  'timedatectl', 'nvidia-smi', 'findmnt', 'blkid', 'true', 'test', 'sleep', 'zcat', 'zgrep', 'xxd', 'od', 'strings',
+  'timedatectl', 'nvidia-smi', 'findmnt', 'blkid', 'true', 'test', 'sleep', 'zcat', 'zgrep', 'od', 'strings',
 ]);
 const READ_SUB: Record<string, RegExp> = {
   systemctl: /^((--user|--system|--no-pager|--all|-a|--full|-l|--plain|--failed|--type=\S+|--state=\S+|-n\s*\d+|--lines=\d+|--output=\S+|-o\s*\S+|--property=\S+|-p\s*\S+|--value)\s+)*(status|is-active|is-enabled|is-failed|list-units|list-unit-files|list-timers|list-sockets|list-dependencies|show|cat)\b/,
   journalctl: /^(?!.*--(vacuum|rotate|flush|sync|relinquish|setup-keys))/,
-  git: /^(-C\s+\S+\s+)?(status|log|diff|show|rev-parse|describe|ls-files|ls-remote|blame|shortlog|fetch|remote(\s+(-v|show\b.*))?$|branch(\s+(-a|-r|-v|-vv|--list|--show-current|--contains\s+\S+|--merged|--no-merged))*\s*$|tag(\s+(-l|--list|--contains\s+\S+)\b.*)?\s*$|config\s+(--get|--list|-l)\b)/,
+  git: /^(?!.*(^|\s)--output(=|\s|$))(-C\s+\S+\s+)?(status|log|diff|show|rev-parse|describe|ls-files|ls-remote|blame|shortlog|fetch|remote(\s+(-v|show\b.*))?$|branch(\s+(-a|-r|-v|-vv|--list|--show-current|--contains\s+\S+|--merged|--no-merged))*\s*$|tag(\s+(-l|--list|--contains\s+\S+)\b.*)?\s*$|config\s+(--get|--list|-l)\b)/,
   docker: /^(compose\s+(ps|logs|config|ls|images)\b|ps|logs|inspect|images|image\s+ls|stats\s+--no-stream|version|info|network\s+(ls|inspect)|volume\s+(ls|inspect))\b/,
   podman: /^(ps|logs|inspect|images|stats\s+--no-stream|version|info)\b/,
   gh: /^(pr\s+(view|list|checks|diff|status)|run\s+(list|view|watch)|release\s+(list|view)|repo\s+view|issue\s+(list|view)|workflow\s+(list|view)|search\s+\S+|auth\s+status(?!.*(-t|--show-token)))\b/,
@@ -104,14 +104,36 @@ const READ_SUB: Record<string, RegExp> = {
   'cleft-ops': /^(health|status)\b/,
   'cleft-release': /^status\b/,
   find: /^(?!.*\s-(delete|exec|execdir|ok|okdir|fprint\w*|fls)\b)/,
-  sed: /^(-n\s+|--quiet\s+|-E\s+|-r\s+)*(?!.*(-i\b|--in-place|\bw\s))/,
   hermes: /^(status|version|doctor|sessions\s+(list|show|search)|cron\s+(list|status)|skills\s+(list|view)|config\s+(get|show)|plugins\s+list|gateway\s+status)\b/,
   npm: /^(ls|list|view|outdated|audit(?!\s+fix)|config\s+get|run\s+(typecheck|lint|test)\b)/,
   node: /^(-v|--version)\s*$/,
   python3: /^(-V|--version)\s*$/,
   curl: /^(-[sSfLkI]+\s+|--silent\s+|--show-error\s+|--fail\s+|--max-time\s+\d+\s+|-m\s+\d+\s+)*https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/[\w\/.?=&-]*\s*$/,
 };
-const SSH_OPT_WITH_VALUE = new Set(['-o', '-i', '-p', '-l', '-F', '-J', '-b', '-c', '-E', '-m', '-O', '-Q', '-S', '-W', '-w', '-L', '-R', '-D']);
+const SSH_OPT_WITH_VALUE = new Set(['-o', '-i', '-p', '-l', '-J', '-b', '-c', '-E', '-m', '-O', '-Q', '-S', '-W', '-w', '-L', '-R', '-D']);
+/** ssh -o settings that only tune the connection (ProxyCommand, LocalCommand and friends run programs here). */
+const SSH_SAFE_O = /^(BatchMode|ConnectTimeout|StrictHostKeyChecking|UserKnownHostsFile|ServerAliveInterval|ServerAliveCountMax|LogLevel|ConnectionAttempts|IdentitiesOnly|Port|User|HostName|Compression|AddressFamily)=?[^\s;]*$/i;
+
+/** Read-only uses of commands that can also write a file or run one: sort -o, uniq IN OUT, tree -o, xxd IN OUT, sed e/w. */
+function writerIsRead(cmd: string, rest: string[]): boolean | null {
+  const files = rest.filter((a) => !a.startsWith('-'));
+  switch (cmd) {
+    case 'sort': return !rest.some((a) => /^(-o|--output)(=|$)|^-[^-]*o/.test(a) || a === '--compress-program' || a.startsWith('--compress-program='));
+    case 'tree': return !rest.some((a) => /^-o$|^-[^-]*o/.test(a) || a.startsWith('--output'));
+    case 'uniq': return files.length <= 1;
+    case 'xxd': return files.length <= 1 && !rest.some((a) => a === '-r' || a === '-revert');
+    case 'sed': {
+      // Only printing: -n/-E/-r/-s options and scripts such as 10,40p, $p, /re/p or /a/,/b/p. No e, w, W or -i.
+      let i = 0;
+      for (; i < rest.length && rest[i].startsWith('-'); i++) if (!/^(-n|-E|-r|-s|--quiet|--silent|--regexp-extended|-nE|-En|-nr|-rn)$/.test(rest[i])) return false;
+      const script = rest[i];
+      if (!script) return false;
+      const addr = String.raw`(\d+|\$|/(?:[^/\\]|\\.)*/)`;
+      return new RegExp(`^(${addr}(,${addr})?)?p(;(${addr}(,${addr})?)?p)*$`).test(script) && rest.slice(i + 1).every((a) => !a.startsWith('-'));
+    }
+  }
+  return null;
+}
 
 /** Split on top-level |, ||, &&, ; and newlines, keeping quotes together. Null when it uses things we don't read through. */
 function pieces(cmd: string): string[] | null {
@@ -119,7 +141,11 @@ function pieces(cmd: string): string[] | null {
   let cur = '', q: string | null = null;
   for (let i = 0; i < cmd.length; i++) {
     const ch = cmd[i];
-    if (q) { cur += ch; if (ch === q) q = null; else if (ch === '\\' && q === '"') cur += cmd[++i] ?? ''; continue; }
+    if (q) {
+      // Inside double quotes the shell still runs `...` and $(...), and expands ${...}: not read through.
+      if (q === '"' && (ch === '`' || (ch === '$' && (cmd[i + 1] === '(' || cmd[i + 1] === '{')))) return null;
+      cur += ch; if (ch === q) q = null; else if (ch === '\\' && q === '"') cur += cmd[++i] ?? ''; continue;
+    }
     if (ch === "'" || ch === '"') { q = ch; cur += ch; continue; }
     if (ch === '\\') { cur += ch + (cmd[++i] ?? ''); continue; }
     if (ch === '`' || (ch === '$' && (cmd[i + 1] === '(' || cmd[i + 1] === '{')) || (ch === '<' && cmd[i + 1] === '(')) return null;
@@ -164,7 +190,13 @@ function pieceIsRead(piece: string, depth: number): boolean {
   if (cmd === 'ssh') {
     if (depth > 0) return false;
     let i = 0;
-    while (i < rest.length && rest[i].startsWith('-')) i += SSH_OPT_WITH_VALUE.has(rest[i]) ? 2 : 1;
+    while (i < rest.length && rest[i].startsWith('-')) {
+      const o = rest[i];
+      if (o === '-F' || o.startsWith('-F')) return false; // another config file can hold ProxyCommand
+      if (o === '-o' && !SSH_SAFE_O.test(rest[i + 1] ?? '')) return false;
+      if (o.startsWith('-o') && o.length > 2 && !SSH_SAFE_O.test(o.slice(2))) return false;
+      i += SSH_OPT_WITH_VALUE.has(o) ? 2 : 1;
+    }
     const remote = rest.slice(i + 1).join(' ');
     if (!rest[i] || !remote.trim()) return false; // an interactive login
     const p = pieces(remote);
@@ -172,6 +204,8 @@ function pieceIsRead(piece: string, depth: number): boolean {
   }
   if (cmd === 'timeout') return rest.length > 1 && /^\d+[smh]?$/.test(rest[0]) && pieceIsRead(rest.slice(1).join(' '), depth);
   if (READ_ANY.has(cmd)) return true;
+  const writer = writerIsRead(cmd, rest);
+  if (writer !== null) return writer;
   const sub = READ_SUB[cmd];
   return !!sub && sub.test(argText);
 }
@@ -201,6 +235,22 @@ function expand(p: string): string {
   return path.normalize(s);
 }
 
+/** Where a path really leads: the deepest existing part resolved through links, with the rest appended. */
+function realTarget(p: string, depth = 0): string {
+  if (depth > 8) return p;
+  const tail: string[] = [];
+  let cur = p;
+  for (let n = 0; n < 64; n++) {
+    try { return path.join(fs.realpathSync(cur), ...tail); } catch { /* not there (or a dangling link) */ }
+    try { const l = fs.readlinkSync(cur); return path.join(realTarget(path.resolve(path.dirname(cur), l), depth + 1), ...tail); } catch { /* not a link */ }
+    const up = path.dirname(cur);
+    if (up === cur) break;
+    tail.unshift(path.basename(cur));
+    cur = up;
+  }
+  return p;
+}
+
 /** The maintainer's working copies, where file edits run without a card. */
 export function devRoots(): string[] {
   const h = home();
@@ -212,12 +262,15 @@ export function devRoots(): string[] {
 export function classifyWrite(target: string): Verdict {
   if (typeof target !== 'string' || !target.trim()) return { kind: 'other', reasons: [] };
   const p = expand(target.trim());
+  // A link inside a working copy may point at a protected or secret file: judge where it really leads too.
+  const real = realTarget(p);
   const reasons: string[] = [];
-  if (SECRET.test(p)) reasons.push('touches a secret file');
-  if (PROTECTED.test(p)) reasons.push('writes to a system or Hermes config path');
-  if (/sheldon|\/silo\//i.test(p)) reasons.push("crosses Sheldon's firm-data boundary");
+  if (SECRET.test(p) || SECRET.test(real)) reasons.push('touches a secret file');
+  if (PROTECTED.test(p) || PROTECTED.test(real)) reasons.push('writes to a system or Hermes config path');
+  if (/sheldon|\/silo\//i.test(p) || /sheldon|\/silo\//i.test(real)) reasons.push("crosses Sheldon's firm-data boundary");
   if (reasons.length) return { kind: 'danger', reasons };
-  if (devRoots().some((r) => p === r || p.startsWith(r + path.sep))) return { kind: 'read', reasons: [] };
+  const under = (x: string) => devRoots().some((r) => x === r || x.startsWith(r + path.sep));
+  if (under(p) && under(real)) return { kind: 'read', reasons: [] };
   return { kind: 'other', reasons: [] };
 }
 

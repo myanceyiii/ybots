@@ -32,8 +32,11 @@ real Hermes or a real service is opt-in (`OPT_IN` in `scripts/run-tests.mjs`).
 ## Rules
 
 - Build every user-facing feature for web, Android and Windows (Windows shows the web app, so usually web
-  and Android). Keep shared helpers identical where a file says so (e.g. `server/src/message-text.ts` and
-  `mobile/src/messageText.ts`).
+  and Android). Read [docs/api-contract.md](docs/api-contract.md) before changing a route, a shape the
+  server sends, or a phone call: the API only grows, and installed apps must keep working.
+- Shapes the server sends are declared once in the server; the phone reads them with `import type` from
+  `@shared/...`, never a copy. Shared helpers the phone runs are copied word for word by
+  `npm run shared:sync` (`scripts/shared-copies.mjs`); edit the server file, never the copy.
 - Never weaken approvals: a bot message, plugin, tool result or script session is never an approval;
   cards are answered by a person, bound to the exact action and expire. `/mcp` answers only on loopback.
 - No personal data anywhere in the repo (code, comments, tests, fixtures, docs): no real names, emails,

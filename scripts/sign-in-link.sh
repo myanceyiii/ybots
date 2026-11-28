@@ -17,6 +17,8 @@
 # not in ALLOWED_EMAILS, so only run it for people you mean to let in. The key it uses never leaves this machine.
 set -euo pipefail
 email="${1:?usage: sign-in-link.sh <email>}"
+# One plain address: anything else (quotes, spaces, new lines) would change the request it is put into.
+[[ "$email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] || { echo "that does not look like one email address" >&2; exit 1; }
 # The app's .env: /opt/hq/app/.env on a standard install, else the .env beside this script's checkout.
 if [ -z "${ENV_FILE:-}" ]; then
   ENV_FILE=/opt/hq/app/.env

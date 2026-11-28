@@ -4,6 +4,8 @@ import { configApi } from '../../lib/configApi';
 import { Icon } from '../Icon';
 import { Glyph } from './glyphs';
 import { ConfirmButton, Segmented, Switch, shortDate } from './ui';
+import { useStore } from '../../store';
+import { useTeach } from '../TeachRecord';
 
 /**
  * Bot settings → Skills. For a bot with its own Hermes agent this is that agent's real skill library
@@ -73,6 +75,7 @@ function AgentSkills({ bot, list, error, reload, appSkills, onAppChange }: {
         </div>
         {!creating && <button type="button" className="cfg-btn cfg-btn--primary" onClick={() => setCreating(true)}><Icon name="plus" size={12} /> New skill</button>}
       </div>
+      <TeachRow bot={bot} />
       {list && <AutoSaveRow bot={bot} list={list} reload={reload} />}
       {creating && <AgentSkillEditor bot={bot} categories={categories} onDone={(name) => { setCreating(false); if (name) { void reload(true); setOpen(name); } }} />}
       {appSkills && appSkills.length > 0 && <AppOnlySection bot={bot} skills={appSkills} onChange={() => { onAppChange(); void reload(true); }} />}
@@ -135,6 +138,29 @@ function AgentSkills({ bot, list, error, reload, appSkills, onAppChange }: {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/** Teach by showing (server/src/teach.ts): open the bot's screen to record a task, or review a recording that waits. */
+function TeachRow({ bot }: { bot: Bot }) {
+  const set = useStore((s) => s.set);
+  const { state } = useTeach(bot.id);
+  if (!state || state.blocked) return null;
+  const rec = state.recording;
+  const waiting = rec && rec.status !== 'recording';
+  return (
+    <div className="cfg-teach">
+      <span className="cfg-item__icon"><Icon name="record" size={14} /></span>
+      <div className="cfg-item__text">
+        <div className="cfg-item__title">{waiting ? 'A recording is waiting for review' : rec ? 'Recording now' : 'Teach by showing'}</div>
+        <div className="cfg-item__sub">{waiting
+          ? `${bot.name} ${rec.status === 'drafting' ? 'is writing it up as a skill.' : 'wrote it up as a skill. Check it, then save it.'}`
+          : `Take control of ${bot.name}’s screen, press Record, do the task once in its browser and press Stop. ${bot.name} writes it up as a skill for you to check.`}</div>
+      </div>
+      {waiting
+        ? <button type="button" className="cfg-btn" onClick={() => set({ teachReview: bot.id })}>Review</button>
+        : <button type="button" className="cfg-btn" onClick={() => set({ viewerOpen: true, viewerMode: 'control', viewerHint: 'Press Record, do the task once in the browser, then press Stop.' })}>{rec ? 'Open screen' : 'Show it'}</button>}
     </div>
   );
 }

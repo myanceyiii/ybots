@@ -14,6 +14,7 @@ import { Pages } from '../src/screens/Pages';
 import { Connections } from '../src/screens/Connections';
 import { PluginCode } from '../src/screens/PluginCode';
 import { Computer } from '../src/screens/Computer';
+import { TeachReview } from '../src/screens/TeachReview';
 import { CustomLook } from '../src/screens/CustomLook';
 import { Home } from '../src/screens/Home';
 import { NewBot } from '../src/screens/NewBot';
@@ -25,11 +26,15 @@ import { Permissions } from '../src/screens/Permissions';
 import { Devices } from '../src/screens/Devices';
 import { SystemStatus } from '../src/screens/SystemStatus';
 import { Usage } from '../src/screens/Usage';
+import { SavedLogins } from '../src/screens/SavedLogins';
+import { Activity } from '../src/screens/Activity';
 import { BotsComputer } from '../src/screens/BotsComputer';
 import { Exchanges } from '../src/screens/Exchanges';
 import { setLive, updateLive } from '../src/live';
+import { showNeedsYou } from '../src/needsYou';
 import { applyScheme, color } from '../src/theme';
 import { SplitPane } from '../src/components/SplitPane';
+import { A2UI_DEMO } from './a2uiDemo';
 import { SideChatChip, SideChatSheet } from '../src/components/SideChats';
 import type { SideChat } from '../src/api';
 import { History } from '../src/screens/History';
@@ -54,15 +59,15 @@ const CALL_DEMO = {
   ],
 } as const;
 const CALL_ERROR = { ...CALL_DEMO, status: 'error', speaking: false, captions: [], error: 'Microphone access is off for this app. Allow it in Android settings to talk to your bot.' } as const;
-const bot = (id: string, name: string, avatarShape: string, avatarColor: string, lastPreview: string, ago: number, extra: Partial<Bot> = {}): Bot => ({
+const bot = (id: string, name: string, avatarShape: Bot['avatarShape'], avatarColor: Bot['avatarColor'], lastPreview: string, ago: number, extra: Partial<Bot> = {}): Bot => ({
   id, name, label: name, avatarShape, avatarColor, avatarImageUrl: null, chatColor: avatarColor === 'gray' || avatarColor === 'black' ? 'blue' : avatarColor as Bot['chatColor'], isPrimary: false, kind: 'agent', pinned: false, unread: 0, lastPreview, lastActivityAt: now - ago, ...extra,
-});
+}) as Bot;
 const BOTS: Bot[] = [
   bot('howard', 'Howard', 'blob', 'violet', 'Nightly backup finished and Host2 disk is at 61%.', 20 * min, { isPrimary: true, pinned: true, unread: 1,
     previewForms: ['Nightly backup finished and Host2 disk is at 61%. Two updates are ready; I need your OK before I restart the gateway.', 'Nightly backup finished and Host2 disk is at 61%', 'Nightly backup finished'] }),
   bot('leonard', 'Leonard', 'teardrop', 'blue', 'You posted last.', 4 * min, { pinned: true, unread: 2, previewBy: 'you' }),
   bot('robin', 'Robin', 'cloud', 'green', 'Grocery pickup is set for 5 PM.', 60 * min, { pinned: true }),
-  bot('sheldon', 'Sheldon', 'hex', 'cyan', 'Posted the summary you asked for in #assistants. I will pick up the follow-up when you mention me there.', 90 * min, { outside: { via: 'slack', channelName: 'assistants', status: 'linked', waiting: 0 } }),
+  bot('sheldon', 'Sheldon', 'hex', 'cyan', 'Posted the summary you asked for in #assistants. I will pick up the follow-up when you mention me there.', 90 * min, { outside: { via: 'slack', channelName: 'assistants', status: 'ready', waiting: 0, callUrl: '' } }),
   bot('scout', 'Deal Scout', 'bean', 'brown', 'Found 4 price drops on your list.', 3 * 60 * min),
   bot('chef', 'Meal Planner', 'egg', 'orange', 'Next week’s menu is ready.', 5 * 60 * min),
   bot('inbox', 'Inbox Keeper', 'capsule', 'red', '12 emails filed, 2 need you.', 26 * 60 * min),
@@ -72,7 +77,7 @@ const BOTS: Bot[] = [
 const GROUP = bot('room_family', 'Family desk', 'cloud', 'gray', 'Leonard: Budget looks fine for the trip.', 10 * min, { kind: 'room', label: 'Group' });
 
 let seq = 0;
-const row = (body: any, ago: number): Row => ({ seq: ++seq, generation: 1, kind: body.type, body, createdAt: now - ago });
+const row = (body: any, ago: number): Row => ({ seq: ++seq, botId: 'demo', generation: 1, kind: body.type, body, createdAt: now - ago, updatedSeq: 0 });
 const msg = (role: 'user' | 'assistant', text: string, ago: number) => row({ type: 'message', role, text }, ago);
 // A group chat where you asked one member by @name (?screen=groupchat; ?draft= fills the message box).
 const GROUP_ROWS: Row[] = [
@@ -101,6 +106,10 @@ const BROWSER_ROWS: Row[] = [
   msg('user', 'Log in to the water company and pay this month’s bill.', 9 * min),
   row({ type: 'card', card: 'approval', status: 'allowed', approvalId: 'b0', digest: 'd', tool: 'secure_input', title: 'Leonard needs your password for my.citywater.example', answeredBy: 'Alex', answeredVia: 'phone app',
     secret: { kind: 'password', kindLabel: 'Password', origin: 'https://my.citywater.example', site: 'my.citywater.example', fieldLabel: 'Password', why: 'Pay the water bill', masked: true, numeric: false, result: { ok: true, detail: 'Filled', at: now } } }, 8 * min),
+  row({ type: 'card', card: 'approval', status: 'pending', approvalId: 'bv', digest: 'd', tool: 'saved_login', title: 'Leonard wants to sign in to my.citywater.example with Alex’s saved login',
+    vault: { origin: 'https://my.citywater.example', site: 'my.citywater.example', login: 'login_1', savedSite: 'citywater.example', label: 'Water bill', userHint: 'al•••@example.com', fields: ['username', 'password'], fieldLabels: ['Email', 'Password'], owner: 'Alex', forScoped: false, connectorFirst: false, why: 'Pay the water bill' } }, 8.5 * min),
+  row({ type: 'card', card: 'approval', status: 'pending', approvalId: 'bs', digest: 'd', tool: 'secure_input', title: 'Leonard needs your password for my.citywater.example',
+    secret: { kind: 'password', kindLabel: 'Password', origin: 'https://my.citywater.example', site: 'my.citywater.example', fieldLabel: 'Password', why: 'Pay the water bill', masked: true, numeric: false, canSave: true } }, 8.2 * min),
   row({ type: 'card', card: 'approval', status: 'pending', approvalId: 'b1', digest: 'd', tool: 'secure_input', title: 'Leonard needs your one-time code for my.citywater.example',
     secret: { kind: 'one_time_code', kindLabel: 'One-time code', origin: 'https://my.citywater.example', site: 'my.citywater.example', fieldLabel: 'Enter the 6-digit code we texted you', why: '', masked: true, numeric: true } }, 6 * min),
   row({ type: 'card', card: 'approval', status: 'pending', approvalId: 'b2', digest: 'd', tool: 'purchase', title: 'Leonard wants to pay $48.00 on my.citywater.example',
@@ -158,6 +167,11 @@ const VIEW_BODY = {
     { id: 'v6', type: 'button', label: 'Compare 3 more carriers', message: 'Compare three more carriers' },
   ],
 };
+const A2UI_ROWS: Row[] = A2UI_DEMO.flatMap((d, i) => [
+  row({ type: 'message', role: 'user', text: d.ask }, (6 - i * 3) * min),
+  row({ type: 'message', role: 'assistant', text: d.say }, (5 - i * 3) * min),
+  row(d.body, (5 - i * 3) * min),
+]);
 const VIEW_ROWS: Row[] = [
   row({ type: 'message', role: 'user', text: 'Can we cut the phone bill?' }, 3 * min),
   row({ type: 'message', role: 'assistant', text: 'Yes. Mint would save about **$110 a month** on your two lines, and coverage at home looks fine.' }, 2 * min),
@@ -271,6 +285,19 @@ const HITS = [
   { chatId: 'robin', botId: 'robin', sideTitle: null, generation: 2, seq: 5, current: false, who: 'you', from: null, snippet: 'Can you find a hotel near the lake for the second weekend of June?', at: 15, len: 5, createdAt: now - 12 * 24 * 60 * min },
   { chatId: 'side_1', botId: 'howard', sideTitle: 'Trip research', generation: 1, seq: 3, current: true, who: 'bot', from: null, snippet: 'Three hotel options are within the budget; the cheapest is the Lakeside Inn.', at: 6, len: 5, createdAt: now - 3 * 24 * 60 * min },
 ];
+const TEACH_STEPS = [
+  { kind: 'page', name: 'Page', role: 'page', origin: 'https://shop.example.com', url: 'https://shop.example.com/', text: 'Pet Shop' },
+  { kind: 'type', name: 'Search', role: 'textbox', origin: 'https://shop.example.com', text: 'dog food' },
+  { kind: 'press', name: 'Search', role: 'textbox', origin: 'https://shop.example.com' },
+  { kind: 'click', name: 'Sign in', role: 'link', origin: 'https://shop.example.com' },
+  { kind: 'type', name: '[sensitive field]', role: 'textbox', origin: 'https://shop.example.com', sensitive: true },
+  { kind: 'click', name: 'Add to cart', role: 'button', origin: 'https://shop.example.com' },
+].map((s, i) => ({ at: now - (10 - i) * 20_000, ...s }));
+const TEACH_DEMO = {
+  id: 'tch_demo', botId: 'leonard', status: 'ready', steps: TEACH_STEPS, note: '', model: 'demo', error: null, skillName: null, startedAt: now - 300_000, stoppedAt: now - 60_000,
+  lines: ['Open https://shop.example.com/ (Pet Shop)', 'Type “dog food” into “Search”', 'Press Enter in “Search”', 'Click the “Sign in” link', 'Fill a sensitive field on shop.example.com (its value was not recorded)', 'Click the “Add to cart” button'],
+  draft: { name: 'order-dog-food', description: 'Use when the person asks to reorder dog food from the pet shop.', body: '## Steps\n\n1. Open the pet shop.\n2. Search for the food the person names (ask if unsure).\n3. Sign in: call ask_secure_input for the password.\n4. Add it to the cart.\n5. Call request_purchase_approval before paying.' },
+};
 const fake = {
   search: async () => ({ q: 'hotel', hits: HITS }),
   conversations: async () => ({ conversations: CONVERSATIONS }),
@@ -296,6 +323,26 @@ const fake = {
     scheduler: { on: true, routines: 6, nextRunAt: Date.now() + 1800_000, nextName: 'Morning brief' }, apps: { listening: 3 }, backup: { tag: 'weekly', at: Date.now() - 2 * 86400_000, ok: true },
     requests: { total: 18234, errors: 3, slow: 11, lastErrorAt: null, slowest: [] }, problems: [{ at: Date.now() - 2 * 3600_000, level: 'warn', text: 'Robin took 40 seconds to start.', count: 2 }], problemTotals: { warn: 2, error: 0 },
     checks: [{ id: 'db', label: 'Database', state: 'ok', detail: '46 MB, checked an hour ago with no damage found.' }, { id: 'disk', label: 'Disk space', state: 'ok', detail: '182 GB free of 500 GB.' }, { id: 'bots', label: 'Bots', state: 'warn', detail: '2 of 3 ready; Robin is starting.' }, { id: 'routines', label: 'Routines', state: 'ok', detail: '6 routines; next is Morning brief in 30 min.' }, { id: 'backup', label: 'Backup', state: 'ok', detail: 'Last weekly backup finished 2 days ago.' }] }),
+  vaultLogins: async () => ({ bots: [{ id: 'leonard', name: 'Leonard' }, { id: 'howard', name: 'Howard' }], logins: [
+    { id: 'login_1', site: 'citywater.example', label: 'Water bill', userHint: 'al•••@example.com', hasUsername: true, hasPassword: true, bots: null, connectorFirst: false, createdAt: now - 9 * 86400_000, updatedAt: now - 9 * 86400_000, lastUsedAt: now - 8 * min, uses: 4 },
+    { id: 'login_2', site: 'library.example.org', label: '', userHint: '12•••', hasUsername: true, hasPassword: true, bots: ['leonard'], connectorFirst: false, createdAt: now - 30 * 86400_000, updatedAt: now - 30 * 86400_000, lastUsedAt: null, uses: 0 },
+    { id: 'login_3', site: 'firstbank.example', label: 'Checking', userHint: 'al•••', hasUsername: true, hasPassword: true, bots: ['leonard'], connectorFirst: true, createdAt: now - 3 * 86400_000, updatedAt: now - 3 * 86400_000, lastUsedAt: now - 2 * 86400_000, uses: 1 },
+  ] }),
+  activity: async (f: any) => {
+    const m = 60_000, t = Date.now();
+    const by = (kind: string, name: string | null, text: string, unwatched = false) => ({ kind, id: null, name, text, phrase: kind === 'routine' ? `started by routine "${name}"` : kind === 'handoff' ? `asked by ${name}` : kind === 'goal' ? 'started by scheduled check-in' : 'started by a person', unwatched });
+    const all = [
+      { id: 9, at: t - 3 * m, botId: 'howard', botName: 'Howard', forName: 'Alex', by: by('routine', 'Nightly backup check', 'Routine · Nightly backup check', true), source: 'card', tool: 'hermes__terminal', title: 'Hermes: run a terminal command', outcome: 'refused', how: 'Asked on its card, nobody answered in time', detail: 'sudo systemctl restart backup.timer', looks: false },
+      { id: 8, at: t - 11 * m, botId: 'leonard', botName: 'Leonard', forName: 'Alex', by: by('handoff', 'Robin', 'Asked by Robin', true), source: 'handoff', tool: 'send_to_bot', title: 'Message to Sheldon refused', outcome: 'refused', how: 'Slack link', detail: 'Messages to Sheldon are paused.', looks: false },
+      { id: 7, at: t - 26 * m, botId: 'leonard', botName: 'Leonard', forName: 'Alex', by: by('person', null, 'A person'), source: 'card', tool: 'gmail__create_draft', title: 'Gmail: create a draft', outcome: 'allowed', how: 'Asked on its card, answered by Alex (phone app)', detail: null, looks: false },
+      { id: 6, at: t - 48 * m, botId: 'robin', botName: 'Robin', forName: 'Sam', by: by('goal', 'Scheduled check-in', 'Scheduled check-in', true), source: 'tool', tool: 'actual__transactions_filter', title: 'Actual: find transactions', outcome: 'failed', how: 'Always allow', detail: 'The budget server did not answer.', looks: true },
+      { id: 5, at: t - 70 * m, botId: 'howard', botName: 'Howard', forName: 'Alex', by: by('person', null, 'A person'), source: 'gate', tool: 'hermes__write_file', title: 'Hermes: write a file', outcome: 'allowed', how: 'Always allow', detail: '/srv/notes/todo.md', looks: false },
+      { id: 4, at: t - 26 * 60 * m, botId: 'leonard', botName: 'Leonard', forName: 'Alex', by: by('person', null, 'A person'), source: 'export', tool: 'activity_export', title: 'Exported 212 activity rows', outcome: 'allowed', how: 'A person, web', detail: 'Filter: nobody watching', looks: false },
+    ];
+    const rows = all.filter((r) => (!f.outcome || r.outcome === f.outcome) && (!f.by || (f.by === 'unwatched' ? r.by.unwatched : r.by.kind === f.by)) && (!f.botId || r.botId === f.botId));
+    return { rows, more: false, counts: { allowed: 3, refused: 2, failed: 1, unwatched: 3 }, bots: [{ id: 'howard', name: 'Howard' }, { id: 'leonard', name: 'Leonard' }, { id: 'robin', name: 'Robin' }] };
+  },
+  activityExport: async () => ({ csv: 'Time (UTC),Bot\r\n', rows: 6, truncated: false, filename: 'ybots-activity.csv' }),
   usage: async (days: number) => { const byDay = Array.from({ length: days }, (_, i) => ({ day: new Date(Date.now() - (days - 1 - i) * 86400_000).toISOString().slice(0, 10), turns: Math.round(18 + 14 * Math.sin(i / 2) + (i % 5) * 3), failed: i % 6 === 0 ? 1 : 0, inputTokens: 90_000 + i * 4000, outputTokens: 11_000 + i * 300 })); const sum = (k: 'turns' | 'failed' | 'inputTokens' | 'outputTokens') => byDay.reduce((a, d) => a + d[k], 0); const totals = { turns: sum('turns'), failed: sum('failed'), inputTokens: sum('inputTokens'), outputTokens: sum('outputTokens') };
     return { days, since: Date.now() - days * 86400_000, totals, byDay, byBot: [{ botId: 'leonard', name: 'Leonard', lastAt: Date.now() - 9 * 60_000, topModel: 'gpt-5.5', turns: Math.round(totals.turns * 0.55), failed: 1, inputTokens: 900_000, outputTokens: 120_000 }, { botId: 'howard', name: 'Howard', lastAt: Date.now() - 3 * 3600_000, topModel: 'gpt-5.5', turns: Math.round(totals.turns * 0.3), failed: 2, inputTokens: 600_000, outputTokens: 80_000 }, { botId: 'robin', name: 'Robin', lastAt: Date.now() - 30 * 3600_000, topModel: 'gpt-5.4-mini', turns: Math.round(totals.turns * 0.15), failed: 0, inputTokens: 0, outputTokens: 0 }], byModel: [{ provider: 'openai-codex', model: 'gpt-5.5', turns: Math.round(totals.turns * 0.85), failed: 3, inputTokens: 1_500_000, outputTokens: 200_000 }, { provider: 'openai-codex', model: 'gpt-5.4-mini', turns: Math.round(totals.turns * 0.15), failed: 0, inputTokens: 0, outputTokens: 0 }] }; },
   deleteConversation: async () => ({ ok: true, conversations: CONVERSATIONS.slice(0, 1) }),
@@ -386,6 +433,8 @@ const fake = {
   roomMembers: async () => ({ members: ['leonard', 'robin', 'sheldon'].map((id) => ({ id, name: id[0].toUpperCase() + id.slice(1), label: '', avatarShape: 'blob', avatarColor: 'blue' })) }),
   setRoomMembers: async (_id: string, botIds: string[]) => ({ ok: true, members: botIds }),
   computer: async () => ({ computer: { status: 'stopped', error: null, screens: [] } }),
+  // Teach a bot (?screen=teach): a recording the bot has written up, waiting for review.
+  teach: async () => ({ blocked: null, recording: TEACH_DEMO }),
   ensureComputer: () => new Promise(() => {}),
   machines: async () => ({ machines: [{
     id: 'pc_demo', name: 'OFFICE-PC', online: true, lastSeenAt: now, createdAt: now - 86400_000,
@@ -459,6 +508,13 @@ export default function Preview() {
       { botId: 'leonard', isRunning: true, activity: { kind: 'working', detail: 'Matching card charges to the budget', since: now - 60_000 }, awaiting: null, startedAt: now - 240_000, model: MODEL_SONNET },
       { botId: 'howard', isRunning: false, activity: { kind: 'waiting_for_you', since: now - 5 * min }, awaiting: { reason: 'Restart the Hermes gateway', since: now - 5 * min } },
     ] as any);
+    // The Needs you board: every card and task waiting on you, across the bots.
+    showNeedsYou([
+      { id: 'howard:41', kind: 'approval', label: 'Approval', title: 'Restart the Hermes gateway', detail: '', botId: 'howard', chatId: 'howard', seq: 41, sideTitle: null, at: now - 5 * min },
+      { id: 'robin:12', kind: 'question', label: 'Question', title: 'Chicken or fish for Sunday dinner?', detail: 'Chicken · Fish', botId: 'robin', chatId: 'robin', seq: 12, sideTitle: null, at: now - 12 * min },
+      { id: 'inbox:7', kind: 'email', label: 'Email to send', title: 'To school@example.org', detail: 'Field trip form', botId: 'inbox', chatId: 'inbox', seq: 7, sideTitle: null, at: now - 40 * min },
+      { id: 'task:t2', kind: 'stalled', label: 'Stalled', title: 'Move the old backups to the new drive', detail: '', botId: 'howard', chatId: 'howard', taskId: 't2', sideTitle: null, at: now - 26 * 60 * min },
+    ]);
   }
   let body: React.ReactNode;
   if (screen === 'welcome') body = <Welcome onSignIn={noop} />;
@@ -507,6 +563,7 @@ export default function Preview() {
   else if (screen === 'newbot') body = <NewBot api={fake} onBack={noop} onCreated={noop} />;
   else if (screen === 'look') body = <CustomLook api={fake} bot={b} onBack={noop} onSaved={noop} />;
   else if (screen === 'computer') body = <Computer api={fake} bot={b} onBack={noop} />;
+  else if (screen === 'teach') body = <TeachReview api={fake} bot={b} onBack={noop} />;
   else if (screen === 'plugins' || screen === 'connections') body = <Connections api={fake} bots={bots} onBack={noop} onOpenChat={noop} onCode={noop} startCreating={!!params.get('create')} />;
   else if (screen === 'plugincode') body = <PluginCode api={fake} draftId="pdr_1" onBack={noop} />;
   else if (screen === 'plugincards') body = <Chat api={fake} bot={BOTS[0]} rows={PLUGIN_ROWS} onBack={noop} onCall={noop} onSettings={noop} onComputer={noop} onRefresh={noop} onPluginCode={noop} />;
@@ -518,12 +575,15 @@ export default function Preview() {
     row({ type: 'card', card: 'view', viewId: 'g2', from: { id: 'leonard', name: 'Leonard' }, updatedAt: now - 5 * min, pin: { on: true, by: 'bot', at: now - 20 * min }, title: 'Thanksgiving budget', text: 'x', blocks: [{ id: 'p', type: 'progress', label: 'Spent of $420', value: 286, max: 420 }] }, 5 * min)]} onBack={noop} onCall={noop} onSettings={noop} onComputer={noop} onRefresh={noop} />;
   else if (screen === 'boardslong' || screen === 'boardsstopped') body = <Chat api={fake} bot={BOTS[0]} bots={BOTS} rows={longBoardRows(screen === 'boardsstopped')} onFiles={noop} onBack={noop} onCall={noop} onSettings={noop} onComputer={noop} onRefresh={noop} />;
   else if (screen === 'boards') body = <Chat api={fake} bot={BOTS[0]} bots={BOTS} rows={BOARD_ROWS} onFiles={noop} onBack={noop} onCall={noop} onSettings={noop} onComputer={noop} onRefresh={noop} />;
+  else if (screen === 'a2ui') body = <Chat api={fake} bot={BOTS[1]} rows={A2UI_ROWS} onFiles={noop} onBack={noop} onCall={noop} onSettings={noop} onComputer={noop} onRefresh={noop} />;
   else if (screen === 'views') body = <Chat api={fake} bot={BOTS[1]} rows={VIEW_ROWS} onFiles={noop} onBack={noop} onCall={noop} onSettings={noop} onComputer={noop} onRefresh={noop} />;
   else if (screen === 'files') body = <Files api={fake} bot={BOTS[1]} onBack={noop} />;
   else if (screen === 'page') body = <Files api={fake} bot={BOTS[1]} startPath="Weekend trip plan.page.json" onBack={noop} />;
   else if (screen.startsWith('file-')) body = <Files api={fake} bot={BOTS[1]} startPath={DEMO_FILES[Number(screen.split('-')[1])].path} onBack={noop} />;
   else if (screen === 'devices') body = <Devices api={fake} onBack={noop} />;
   else if (screen === 'usage') body = <Usage api={fake} onBack={noop} />;
+  else if (screen === 'logins') body = <SavedLogins api={fake} onBack={noop} />;
+  else if (screen === 'activity') body = <Activity api={fake} onBack={noop} />;
   else if (screen === 'system') body = <SystemStatus api={fake} onBack={noop} />;
   else if (screen === 'permissions') body = <Permissions api={fake} onBack={noop} />;
   else if (screen === 'botscomputer') body = <BotsComputer api={fake} bots={bots} onBack={noop} />;

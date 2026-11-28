@@ -4,6 +4,7 @@ import type { Bot, ComputerState, LiveState, Routine, Row, ServerEvent, SideChat
 import { api, type SignInInfo } from './lib/api';
 import { lsGet, lsSet } from './lib/storage';
 import { loadPaneWidths, savePaneWidth } from './lib/paneWidths';
+import { refreshNeedsYou } from './lib/needsYou';
 
 export type ModalKind = 'create' | 'search' | 'group' | 'device' | 'history' | 'shortcuts' | null;
 
@@ -59,6 +60,8 @@ interface State {
   viewerMode: 'watch' | 'control';
   /** One line shown under the large computer view while the person is driving (e.g. a sign-in to finish). */
   viewerHint: string | null;
+  /** Teach a bot: the bot whose recording is open for review (components/TeachReview.tsx). Not saved. */
+  teachReview: string | null;
   /** "New conversation" was just started here: the Undo toast (components/FreshUndoToast.tsx) shows until `until`. */
   freshUndo: { botId: string; name: string; until: number } | null;
   /** Each bot's side chats (server side-chats.ts), most recently used first. */
@@ -145,7 +148,7 @@ export const isCurrentChat = (botId: string, token: string) => chatToken(botId) 
 /** Everything that belongs to the signed-in account. Cleared when a different account (or nobody) signs in. */
 const accountState = () => ({
   bots: [] as Bot[], live: {}, transcripts: {}, routines: {}, computer: null, selectedBotId: null,
-  filesOpen: false, filesPath: null, modal: null as ModalKind, viewerOpen: false, viewerHint: null, freshUndo: null, pane: 'list' as const,
+  filesOpen: false, filesPath: null, modal: null as ModalKind, viewerOpen: false, viewerHint: null, teachReview: null, freshUndo: null, pane: 'list' as const,
   sideChats: {} as Record<string, SideChat[]>, sideUndo: null, focus: null, history: null, lightbox: null, muted: {} as Record<string, number>, keptUnread: {} as Record<string, true>,
 });
 const LS_DETAILS = 'detailsOpen';
@@ -187,6 +190,7 @@ export const useStore = create<State>((set, get) => ({
   viewerOpen: false,
   viewerMode: 'watch',
   viewerHint: null,
+  teachReview: null,
   freshUndo: null,
   sideChats: {},
   activeChat: savedActiveChat(),
@@ -229,6 +233,7 @@ export const useStore = create<State>((set, get) => ({
     const sel = get().selectedBotId;
     const selectedBotId = sel && bots.some((b) => b.id === sel) ? sel : (bots.find((b) => b.isPrimary) ?? bots[0])?.id ?? null;
     set({ bots, live: liveMap });
+    refreshNeedsYou(0);
     if (selectedBotId !== get().selectedBotId || !get().transcripts[selectedBotId ?? '']) {
       if (selectedBotId) get().selectBot(selectedBotId);
     }
@@ -402,9 +407,12 @@ export const useStore = create<State>((set, get) => ({
         return;
       case 'rows':
         s.upsertRows(ev.botId, ev.generation, ev.rows);
+        // A card posted or answered anywhere can change the Needs you board (lib/needsYou.ts).
+        if (ev.rows.some((r) => r.kind === 'card')) refreshNeedsYou();
         return;
       case 'cleared':
         bumpChat(ev.botId);
+        refreshNeedsYou();
         set((st) => ({ transcripts: { ...st.transcripts, [ev.botId]: { generation: ev.generation, bySeq: {}, loaded: true } } }));
         return;
       case 'restored':
@@ -413,11 +421,15 @@ export const useStore = create<State>((set, get) => ({
         set((st) => ({ transcripts: { ...st.transcripts, [ev.botId]: { generation: ev.generation, bySeq: {}, loaded: false } } }));
         s.loadRows(ev.botId).catch(console.error);
         return;
-      case 'live':
+      case 'live': {
+        const was = s.live[ev.state.botId];
+        if (!!was?.awaiting !== !!ev.state.awaiting || !!was?.isRunning !== !!ev.state.isRunning) refreshNeedsYou();
         set((st) => ({ live: { ...st.live, [ev.state.botId]: ev.state } }));
         return;
+      }
       case 'roster':
         s.loadBots().catch(console.error);
+        refreshNeedsYou();
         return;
       case 'bot': {
         const exists = s.bots.some((b) => b.id === ev.bot.id);
@@ -440,6 +452,9 @@ export const useStore = create<State>((set, get) => ({
         if (s.routines[ev.botId] || ev.botId === s.selectedBotId) s.loadRoutines(ev.botId).catch(console.error);
         return;
       case 'tasks':
+        refreshNeedsYou();
+        window.dispatchEvent(new CustomEvent('cleftbot:event', { detail: ev }));
+        return;
       case 'memories':
       case 'page':
       case 'pages':

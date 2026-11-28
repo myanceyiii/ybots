@@ -51,7 +51,9 @@ async function loadKeys(): Promise<void> {
 }
 
 async function keyFor(kid: string): Promise<crypto.KeyObject | undefined> {
-  const stale = Date.now() - fetchedAt > KEYS_TTL;
+  // Stale keys are refetched at most once per RETRY_GAP: while the certs address is down, requests use the
+  // keys we have instead of each waiting up to 5 s on another try.
+  const stale = Date.now() - fetchedAt > KEYS_TTL && Date.now() - lastTry > RETRY_GAP;
   const unknown = !keys.has(kid) && Date.now() - lastTry > RETRY_GAP;
   if (stale || unknown) {
     inflight ??= loadKeys().catch((e) => console.warn(`[access] ${e?.message ?? e}`)).finally(() => { inflight = null; });

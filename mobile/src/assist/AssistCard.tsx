@@ -112,12 +112,22 @@ function AssistCard() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- listening, and sending when you stop talking ----
+  const startingListen = useRef(false);
   const startListening = useCallback(async (a: Client | null = api, b: Bot | null = bot) => {
     if (!a || !b || listenRef.current) return;
     try { voiceNative.clear(); } catch { /* nothing playing */ }
     if (!voiceNative.available || !voiceNative.liveDictation) { setNote('Talking needs a newer build of the app. Type instead.'); return; }
-    const p = await requestRecordingPermissionsAsync().catch(() => null);
-    if (p && !p.granted) { setNote('Microphone access is off for this app. Allow it in Android settings, or type instead.'); return; }
+    if (startingListen.current) return;
+    startingListen.current = true;
+    let opts: Awaited<ReturnType<Client['voiceOptions']>> | null = null;
+    try {
+      const p = await requestRecordingPermissionsAsync().catch(() => null);
+      if (p && !p.granted) { setNote('Microphone access is off for this app. Allow it in Android settings, or type instead.'); return; }
+      // Asked before the microphone opens, so nothing is awaited between opening it and holding it.
+      opts = voiceNative.liveStream ? await a.voiceOptions().catch(() => null) : null;
+    } finally { startingListen.current = false; }
+    // The card was closed (or listening began another way) while waiting: don't open the microphone.
+    if (!alive.current || listenRef.current) return;
     try { voiceNative.start('dictate'); } catch (e) { setNote(nativeReason(e, 'Could not open the microphone.')); return; }
     setWords({ settled: '', pending: '' });
     setNote(null);
@@ -126,7 +136,6 @@ function AssistCard() {
       if (!path) return '';
       try { return await transcribe(a, path); } finally { voiceNative.discard(path); }
     };
-    const opts = voiceNative.liveStream ? await a.voiceOptions().catch(() => null) : null;
     const sock = opts?.live ? a.liveSocket() : null;
     const WS = WebSocket as unknown as new (url: string, protocols: string[] | undefined, o: { headers: Record<string, string> }) => WebSocket;
     let latest: LiveText = { settled: '', pending: '' };

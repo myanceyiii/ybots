@@ -7,7 +7,8 @@ import { errorDetails } from '../components/ErrorBoundary';
 import { connectionNow } from '../connection';
 import { toast } from '../toast';
 import { downloadMyData } from '../exportData';
-import type { Bot, Client, SearchHit } from '../api';
+import type { Bot, Client, NeedsItem, SearchHit } from '../api';
+import { useNeedsYou } from '../needsYou';
 import { BotAvatar } from '../components/BotAvatar';
 import { ModelBadgeOverlay } from '../components/ModelBadge';
 import { Icon } from '../components/Icon';
@@ -50,11 +51,11 @@ const awaitingReason = (s?: LiveState) => {
  * lines of its last message), with a "Needs you" strip on top for bots waiting on an approval. Newest first.
  * The + menu makes a bot or a group chat. `selectedId` marks the chat open beside the list on a wide (unfolded) screen.
  */
-export function Home({ api, bots: allBots, loading, loadError, onRetry, name, refreshing, onRefresh, onOpen, onNewBot, onNewGroup, onTasks, onPcs, onPlugins, onSignOut, onDeviceLink, onPermissions, onDevices, onSystem, onUsage, onBotsComputer, selectedId, paneWidth, onBot, onHistory, onSettings, onOpenHit }: {
+export function Home({ api, bots: allBots, loading, loadError, onRetry, name, refreshing, onRefresh, onOpen, onNewBot, onNewGroup, onTasks, onPcs, onPlugins, onSignOut, onDeviceLink, onPermissions, onDevices, onSystem, onLogins, onUsage, onActivity, onBotsComputer, selectedId, paneWidth, onBot, onHistory, onSettings, onOpenHit, onOpenNeeds }: {
   api: Client; bots: Bot[];
   /** The first load of this sign-in has not answered yet, or could not (with Try again). */
   loading?: boolean; loadError?: string | null; onRetry?: () => void;
-  name: string; refreshing: boolean; onRefresh: () => void; onOpen: (b: Bot) => void; onNewBot?: () => void; onNewGroup?: () => void; onTasks?: () => void; onPcs?: () => void; onPlugins?: (create?: boolean) => void; onSignOut: () => void; onDeviceLink?: () => void; onPermissions?: () => void; onDevices?: () => void; onSystem?: () => void; onUsage?: () => void; onBotsComputer?: () => void;
+  name: string; refreshing: boolean; onRefresh: () => void; onOpen: (b: Bot) => void; onNewBot?: () => void; onNewGroup?: () => void; onTasks?: () => void; onPcs?: () => void; onPlugins?: (create?: boolean) => void; onSignOut: () => void; onDeviceLink?: () => void; onPermissions?: () => void; onDevices?: () => void; onSystem?: () => void; onUsage?: () => void; onLogins?: () => void; onActivity?: () => void; onBotsComputer?: () => void;
   selectedId?: string | null;
   /** Beside an open chat (SplitPane): the list's width, which may be dragged down to a column of pictures. */
   paneWidth?: number;
@@ -64,6 +65,8 @@ export function Home({ api, bots: allBots, loading, loadError, onRetry, name, re
   onHistory?: (b: Bot) => void; onSettings?: (b: Bot) => void;
   /** A message found by the search was tapped. */
   onOpenHit?: (hit: SearchHit) => void;
+  /** A row of the Needs you board was tapped: open its chat at the card (or Tasks for a stalled task). */
+  onOpenNeeds?: (it: NeedsItem) => void;
 }) {
   // Bots hidden from this list (Bot.ownerHidden) stay off it, its counts and its search. A line
   // under the list opens or shows them again.
@@ -87,8 +90,14 @@ export function Home({ api, bots: allBots, loading, loadError, onRetry, name, re
   // All, Unread or Needs you (not kept: the list opens on All, as on the web).
   const [filter, setFilter] = useState<Filter>('all');
   const unreadCount = bots.filter((b) => b.unread > 0).length;
-  const needsCount = bots.filter((b) => needsYou(live[b.id])).length;
-  const kept = filter === 'unread' ? byRecent.filter((b) => b.unread > 0 || b.id === selectedId) : filter === 'needs' ? byRecent.filter((b) => needsYou(live[b.id])) : byRecent;
+  // The Needs you board (server needs-you.ts): every card, question, form or task waiting on the person, across every bot.
+  const allNeeds = useNeedsYou();
+  const botIds = new Set(bots.map((b) => b.id));
+  const needsItems = allNeeds.filter((it) => botIds.has(it.botId));
+  const needsIds = new Set(needsItems.map((it) => it.botId));
+  const waitsOnYou = (b: Bot) => needsYou(live[b.id]) || needsIds.has(b.id);
+  const needsCount = bots.filter(waitsOnYou).length;
+  const kept = filter === 'unread' ? byRecent.filter((b) => b.unread > 0 || b.id === selectedId) : filter === 'needs' ? byRecent.filter(waitsOnYou) : byRecent;
   const list = q ? byRecent.filter((b) => `${b.name} ${b.label} ${b.description ?? ''} ${b.lastPreview ?? ''}`.toLowerCase().includes(q)) /* same fields as web search */ : kept;
   const drafts = useDrafts();
   // Muted chats (the same setting as Notifications › Mute a chat), for the bell on a row and the row menu.
@@ -105,7 +114,11 @@ export function Home({ api, bots: allBots, loading, loadError, onRetry, name, re
   // The server's version, for the line under This phone's settings.
   const [server, setServer] = useState<string | null>(null);
   useEffect(() => { if (phone && !server) api.version().then((v) => setServer(v.version + (v.commit ? ` (${v.commit.slice(0, 7)})` : '')), () => {}); }, [phone, server, api]);
-  const waiting = q ? [] : byRecent.filter((b) => needsYou(live[b.id]));
+  // A bot that says it is waiting with no card on the board yet (an older server, a card still on its way) keeps its own row.
+  const waiting = q ? [] : byRecent.filter((b) => needsYou(live[b.id]) && !needsIds.has(b.id));
+  const [allShown, setAllShown] = useState(false);
+  const boardRows = q ? [] : allShown ? needsItems : needsItems.slice(0, NEEDS_FIRST);
+  const boardCount = (q ? 0 : needsItems.length) + waiting.length;
   const fit = fitFor(paneWidth);
   const [stripH, setStripH] = useState(0);
 
@@ -143,14 +156,23 @@ export function Home({ api, bots: allBots, loading, loadError, onRetry, name, re
             <Chip title={needsCount ? `Needs you · ${needsCount}` : 'Needs you'} selected={filter === 'needs'} onPress={() => setFilter('needs')} />
           </View>
         )}
-        {waiting.length > 0 && fit.strip > 0 && filter === 'all' && (
+        {boardCount > 0 && fit.strip > 0 && filter === 'all' && (
           // Beside a chat the strip folds away as the list narrows (the rows still show Needs you), its height
           // shrinking with it so the rows below glide up rather than jump.
           <View style={fit.split ? { height: stripH ? stripH * fit.strip : undefined, opacity: fit.strip, overflow: 'hidden' } : undefined}>
             <View style={fit.split ? { width: STRIP_MIN } : undefined} onLayout={(e) => setStripH(e.nativeEvent.layout.height)}>
-              <SectionLabel tone="alert">Needs you · {waiting.length}</SectionLabel>
+              <SectionLabel tone="alert">Needs you · {boardCount}</SectionLabel>
               <View style={{ paddingHorizontal: 14, gap: 8, paddingBottom: 4 }}>
+                {boardRows.map((it) => {
+                  const b = bots.find((x) => x.id === it.botId)!;
+                  return <NeedsItemRow key={it.id} api={api} bot={b} item={it} onOpen={() => (onOpenNeeds ? onOpenNeeds(it) : onOpen(b))} />;
+                })}
                 {waiting.map((b) => <NeedsYouRow key={b.id} api={api} bot={b} reason={awaitingReason(live[b.id])} onOpen={() => onOpen(b)} />)}
+                {needsItems.length > NEEDS_FIRST && (
+                  <Pressable accessibilityRole="button" onPress={() => setAllShown(!allShown)} hitSlop={8} style={{ alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 4 }}>
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: color.primary }}>{allShown ? 'Show fewer' : `Show all ${needsItems.length}`}</Text>
+                  </Pressable>
+                )}
               </View>
               <SectionLabel>Chats</SectionLabel>
             </View>
@@ -232,6 +254,8 @@ export function Home({ api, bots: allBots, loading, loadError, onRetry, name, re
         {onPlugins && <SheetRow icon="link" title="Connections" onPress={() => { setProfile(false); onPlugins(); }} />}
         {onBotsComputer && <SheetRow icon="monitor" title="Bots’ computer" onPress={() => { setProfile(false); onBotsComputer(); }} />}
         {onPermissions && <SheetRow icon="check" title="Permissions" onPress={() => { setProfile(false); onPermissions(); }} />}
+        {onLogins && <SheetRow icon="key" title="Saved logins" onPress={() => { setProfile(false); onLogins(); }} />}
+        {onActivity && <SheetRow icon="history" title="Activity" onPress={() => { setProfile(false); onActivity(); }} />}
         {onUsage && <SheetRow icon="table" title="Usage" onPress={() => { setProfile(false); onUsage(); }} />}
         {onSystem && <SheetRow icon="chart" title="System status" onPress={() => { setProfile(false); onSystem(); }} />}
         <SheetRow icon="sliders" title="Appearance and notifications" onPress={() => { setProfile(false); setPhone(true); }} />
@@ -299,6 +323,43 @@ function SectionLabel({ children, tone }: { children: React.ReactNode; tone?: 'a
     <Text style={{ fontSize: 13, fontWeight: '700', letterSpacing: 0.7, textTransform: 'uppercase', color: tone === 'alert' ? color.problemInk : color.inkMuted, paddingHorizontal: 18, paddingTop: 10, paddingBottom: 8 }}>
       {children}
     </Text>
+  );
+}
+
+/** Board rows shown before "Show all". */
+const NEEDS_FIRST = 3;
+
+/** How long ago, in a word: "now", "5m", "3h", "2d". */
+function ago(t: number) {
+  const s = (Date.now() - t) / 1000;
+  if (s < 60) return 'now';
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86_400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86_400)}d`;
+}
+
+/**
+ * One thing on the Needs you board: whose it is, what kind (Approval, Question, Form, Stalled), what it says in
+ * full, and a button into the chat at that card. Answering happens on the card there, never from this row.
+ */
+function NeedsItemRow({ api, bot, item, onOpen }: { api: Client; bot: Bot; item: NeedsItem; onOpen: () => void }) {
+  const task = item.kind === 'task' || item.kind === 'stalled';
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={`${bot.name}: ${item.label}. ${item.title}. ${item.kind === 'stalled' ? 'Open Tasks' : 'Review'}`} onPress={onOpen}
+      style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: color.surface, borderWidth: 1, borderColor: task ? color.hairline : color.alertBorder, borderRadius: 16, paddingVertical: 10, paddingHorizontal: 12, opacity: pressed ? 0.8 : 1 })}>
+      <BotAvatar bot={bot} size={36} server={api.server} auth={api.authHeader} crop="portrait" />
+      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
+          <Text style={{ fontSize: 12, fontWeight: '700', color: task ? color.inkMuted : color.problemInk }}>{item.label}</Text>
+          <Text numberOfLines={1} style={{ flexShrink: 1, fontSize: 12, color: color.inkMuted }}>{bot.name}{item.sideTitle ? ` · ${item.sideTitle}` : ''}</Text>
+          <Text style={{ marginLeft: 'auto', fontSize: 12, color: color.timestamp }}>{ago(item.at)}</Text>
+        </View>
+        <Text style={{ fontSize: 15, lineHeight: 20, color: color.ink }}>{item.title}</Text>
+      </View>
+      <View style={{ backgroundColor: task ? color.fill : color.primary, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8 }}>
+        <Text style={{ color: task ? color.ink : color.onPrimary, fontSize: 14, fontWeight: '600' }}>{item.kind === 'stalled' ? 'Tasks' : 'Review'}</Text>
+      </View>
+    </Pressable>
   );
 }
 

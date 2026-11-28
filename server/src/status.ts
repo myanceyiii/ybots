@@ -197,8 +197,7 @@ function lastDeploy(): ServerStatus['deploy'] {
     const size = fs.statSync(file).size;
     const fd = fs.openSync(file, 'r');
     const buf = Buffer.alloc(Math.min(size, 16_384));
-    fs.readSync(fd, buf, 0, buf.length, Math.max(0, size - buf.length));
-    fs.closeSync(fd);
+    try { fs.readSync(fd, buf, 0, buf.length, Math.max(0, size - buf.length)); } finally { fs.closeSync(fd); }
     text = buf.toString('utf8');
   } catch { return null; }
   const lines = text.trim().split('\n').map((l) => l.split('|').map((x) => x.trim())).filter((f) => f.length >= 5 && (f[2] === 'deploy' || f[2] === 'rollback'));
@@ -401,6 +400,6 @@ statusApi.post('/status/problems/clear', (c) => {
   if (!isOwner(user.id)) return c.json({ error: 'Only the owner of this server can do this.' }, 403);
   if (c.get('agent')) return c.json({ error: 'Only a person can clear the list.' }, 403);
   const n = clearProblems();
-  console.log(`[status] ${user.email} cleared ${n} line(s) from the problem list`);
+  console.log(`[status] account ${user.id} cleared ${n} line(s) from the problem list`);
   return c.json({ ok: true, cleared: n });
 });

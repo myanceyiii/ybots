@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { safeLink } from '@shared/safe-url';
 import type { Bot, OutsideExchange } from '@shared/types';
 import { BotAvatarFor } from '../avatar/BotAvatar';
 import { api } from '../lib/api';
@@ -109,7 +110,7 @@ export function OutsideDetails({ bot }: { bot: Bot }) {
                 <div className="exchange__foot">
                   <span className={`exchange__state is-${x.state}`}>{stateText(x)}</span>
                   {x.error && <span className="exchange__error">{x.error}</span>}
-                  {x.link && <a href={x.link} target="_blank" rel="noreferrer">Open in Slack ↗</a>}
+                  {safeLink(x.link) && <a href={safeLink(x.link)!} target="_blank" rel="noreferrer">Open in Slack ↗</a>}
                 </div>
               </div>
             ))}

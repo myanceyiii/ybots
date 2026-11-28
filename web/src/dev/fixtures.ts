@@ -23,6 +23,14 @@ export function injectFixtures() {
   let call = 0;
   const step = (name: string, label: string, status: ToolCallBody['status'], ago: number, more: Partial<ToolCallBody> = {}): Row =>
     at('tool-call', { type: 'tool-call', callId: `fx_call_${++call}`, name, label, status, ...more }, ago);
+  if (variant === 'a2ui') {
+    // A2UI interfaces in answer views (server/src/a2ui.ts), the same demo the Android preview shows.
+    import('../../../mobile/preview/a2uiDemo').then(({ A2UI_DEMO }) => {
+      const msg = (role: 'user' | 'assistant', text: string, ago: number) => at('message', { type: 'message', role, text } as any, ago);
+      st.upsertRows(botId, gen, A2UI_DEMO.flatMap((d, i) => [msg('user', d.ask, (6 - i * 3) * 60_000), msg('assistant', d.say, (5 - i * 3) * 60_000), at('card', d.body, (5 - i * 3) * 60_000 - 1)]));
+    });
+    return;
+  }
   if (variant === 'boards' || variant === 'boardsgroup' || variant === 'boardslong' || variant === 'boardsstopped') {
     const msg = (role: 'user' | 'assistant', text: string, ago: number) => at('message', { type: 'message', role, text } as any, ago);
     const brows: Row[] = [

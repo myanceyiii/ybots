@@ -3,6 +3,7 @@ import { Modal, Pressable, ScrollView, Text, View, useWindowDimensions } from 'r
 import type { Bot, Client, Row } from '../api';
 import { BOARD_TIMES, boardLine, boardState, stoppedBar, type BoardState } from '../boardPin';
 import { botColor, color } from '../theme';
+import { useSimple } from '../simple';
 import { BotAvatar } from './BotAvatar';
 import { Icon } from './Icon';
 import { ViewCard } from './ViewCard';
@@ -47,7 +48,8 @@ function Bar({ pct, width, tint }: { pct: number; width: number; tint: string })
 export function BoardDock({ api, bot, bots, rows, onJump }: { api: Client; bot: Bot; bots?: Bot[]; rows: Row[]; onJump?: (seq: number) => void }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(t); }, []);
-  const simple = false as boolean;
+  // The simple view: a scoped sign-in (same rule as the rest of the chat).
+  const simple = useSimple();
   const all = useMemo(() => pinnedBoards(rows, now), [rows, now]);
   const boards = simple ? all.slice(0, 1) : all;
   const [open, setOpen] = useState(false);

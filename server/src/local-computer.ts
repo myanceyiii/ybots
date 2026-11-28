@@ -71,6 +71,8 @@ function startDetached(cmd: string, args: string[], n: number, what: string, ext
     stdio: ['ignore', log, log],
     env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '/root', LANG: process.env.LANG ?? 'C.UTF-8', DISPLAY: `:${n}`, ...extraEnv },
   });
+  // A missing Xvfb, x11vnc or window manager gives an 'error' event: logged, never an unhandled one.
+  child.on('error', (e) => console.warn(`[local-computer] could not start ${what} on :${n}: ${String(e?.message ?? e)}`));
   child.unref();
   fs.closeSync(log);
   if (child.pid) fs.writeFileSync(pidFile(what, n), String(child.pid));
@@ -131,12 +133,22 @@ export function ensureDisplay(n: number): Promise<void> {
   return p;
 }
 
+/**
+ * Whether a pid from a pid file is still the program we started for display :n. A pid can be reused after a
+ * reboot or a crash: only a process whose environment has our DISPLAY=:n is signalled.
+ */
+function ourPid(pid: number | null, n: number): boolean {
+  if (!alive(pid)) return false;
+  try { return fs.readFileSync(`/proc/${pid}/environ`).toString('latin1').split('\0').includes(`DISPLAY=:${n}`); }
+  catch { return process.platform !== 'linux'; }
+}
+
 /** Stop what this module started on display :n (never the default screen). */
 export async function stopDisplay(n: number): Promise<void> {
   if (n === DEFAULT_DISPLAY) return;
   for (const what of ['vnc', 'wm', 'xvfb']) {
     const pid = readPid(pidFile(what, n));
-    if (alive(pid)) { try { process.kill(pid!, 'SIGTERM'); } catch { /* gone */ } }
+    if (ourPid(pid, n)) { try { process.kill(pid!, 'SIGTERM'); } catch { /* gone */ } }
     try { fs.unlinkSync(pidFile(what, n)); } catch { /* none */ }
   }
 }
@@ -180,13 +192,13 @@ async function stopVnc(n: number): Promise<void> {
   const pattern = `x11vnc .*-rfbport ${vncPort(n)}( |$)`;
   const left = async () => (await run('pgrep', ['-f', pattern], 5000).catch(() => '')).trim() !== '';
   const pid = readPid(pidFile('vnc', n));
-  if (alive(pid)) { try { process.kill(pid!, 'SIGTERM'); } catch { /* gone */ } }
+  if (ourPid(pid, n)) { try { process.kill(pid!, 'SIGTERM'); } catch { /* gone */ } }
   // One started before the pid file existed, or by an older build, is found by its port.
   await run('pkill', ['-f', pattern], 5000).catch(() => '');
   for (let i = 0; i < 20 && (await left()); i++) await sleep(100);
   // A hung (or stopped) x11vnc ignores SIGTERM.
   if (await left()) {
-    if (alive(pid)) { try { process.kill(pid!, 'SIGKILL'); } catch { /* gone */ } }
+    if (ourPid(pid, n)) { try { process.kill(pid!, 'SIGKILL'); } catch { /* gone */ } }
     await run('pkill', ['-KILL', '-f', pattern], 5000).catch(() => '');
     for (let i = 0; i < 20 && (await left()); i++) await sleep(100);
   }

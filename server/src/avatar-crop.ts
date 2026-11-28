@@ -23,10 +23,21 @@ const ABOVE_SHARE = 0.3;
 /** Never tighter than this share of the character's height, so small heads still show shoulders. */
 const MIN_SIDE = 0.36;
 
+/** Pictures bigger than this are shown uncropped rather than decoded (an avatar is a few hundred pixels). */
+const MAX_SIDE = 8192;
+const MAX_PIXELS = 24_000_000;
+
 function decode(bytes: Buffer, mime: string): Rgba | null {
   try {
     if (mime === 'image/jpeg') return jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true, maxMemoryUsageInMB: 256 });
-    if (mime === 'image/png') { const p = PNG.sync.read(bytes); return { width: p.width, height: p.height, data: p.data }; }
+    if (mime === 'image/png') {
+      // A small file can declare a huge picture: read the size from the header before decoding it.
+      if (bytes.length < 24 || bytes.readUInt32BE(12) !== 0x49484452) return null; // IHDR
+      const w = bytes.readUInt32BE(16), h = bytes.readUInt32BE(20);
+      if (!w || !h || w > MAX_SIDE || h > MAX_SIDE || w * h > MAX_PIXELS) return null;
+      const p = PNG.sync.read(bytes);
+      return { width: p.width, height: p.height, data: p.data };
+    }
   } catch { /* not a picture we can read */ }
   return null;
 }

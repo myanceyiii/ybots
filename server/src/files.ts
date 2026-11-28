@@ -55,18 +55,36 @@ export function insideFile(botId: string, rel: string): string | null {
   } catch { return null; }
 }
 
-/** Where a new or changed file may be written: its folder must already resolve inside the workspace. */
+/** Where a new or changed file may be written: its folder must resolve inside the workspace before any
+ * missing folder is made, and an existing name there must be a plain file (a link, even a dangling one, is refused). */
 export function insideTarget(botId: string, rel: string): string | null {
   try {
+    if (rel.split('/').some((s) => s === '..') || /[\0\n\r]/.test(rel)) return null;
     const rootPath = workspaceRoot(botId);
     fs.mkdirSync(rootPath, { recursive: true });
     const root = fs.realpathSync(rootPath);
+    const inside = (p: string) => p === root || p.startsWith(root + '/');
     const dir = path.dirname(path.join(root, rel));
-    fs.mkdirSync(dir, { recursive: true });
-    const realDir = fs.realpathSync(dir);
-    if (realDir !== root && !realDir.startsWith(root + '/')) return null;
+    if (!inside(dir)) return null;
+    // Find the deepest folder that already exists and check where it really is before making the rest.
+    let have = dir;
+    const missing: string[] = [];
+    while (!fs.existsSync(have)) {
+      try { fs.lstatSync(have); return null; } catch (e: any) { if (e?.code !== 'ENOENT') return null; }
+      missing.unshift(path.basename(have));
+      have = path.dirname(have);
+    }
+    let realDir = fs.realpathSync(have);
+    if (!inside(realDir)) return null;
+    for (const part of missing) {
+      realDir = path.join(realDir, part);
+      fs.mkdirSync(realDir);
+    }
+    if (!inside(fs.realpathSync(realDir))) return null;
     const target = path.join(realDir, path.basename(rel));
-    if (fs.existsSync(target) && (fs.lstatSync(target).isSymbolicLink() || !fs.statSync(target).isFile())) return null;
+    let st: fs.Stats | null = null;
+    try { st = fs.lstatSync(target); } catch (e: any) { if (e?.code !== 'ENOENT') return null; }
+    if (st && (st.isSymbolicLink() || !st.isFile())) return null;
     return target;
   } catch { return null; }
 }
@@ -160,15 +178,31 @@ async function pageCount(pdf: string): Promise<number> {
 }
 
 /** One page of a PDF or office file as a PNG (cached). `n` counts from 1. */
-export async function pagePng(file: string, n: number): Promise<string> {
+/** One conversion at a time per output: a second request for the same page or sheet waits for the first. */
+const drawing = new Map<string, Promise<unknown>>();
+function once<T>(key: string, job: () => Promise<T>): Promise<T> {
+  const running = drawing.get(key) as Promise<T> | undefined;
+  if (running) return running;
+  const p: Promise<T> = job().finally(() => { if (drawing.get(key) === p) drawing.delete(key); });
+  drawing.set(key, p);
+  return p;
+}
+
+export function pagePng(file: string, n: number): Promise<string> {
+  return once(`png:${cacheKey(file)}:${n}`, () => drawPage(file, n));
+}
+
+async function drawPage(file: string, n: number): Promise<string> {
   const pdf = await asPdf(file);
   const dir = path.join(cacheDir(), cacheKey(file));
   fs.mkdirSync(dir, { recursive: true });
   const png = path.join(dir, `p${n}.png`);
   if (fs.existsSync(png)) return png;
-  const base = path.join(dir, `p${n}`);
+  // Drawn under a temporary name and moved into place, so a reader never gets a half-written picture.
+  const base = path.join(dir, `p${n}.part-${crypto.randomUUID()}`);
   const r = await run('pdftoppm', ['-png', '-r', '110', '-scale-to', '1600', '-f', String(n), '-l', String(n), '-singlefile', pdf, base], 60_000);
-  if (r.code !== 0 || !fs.existsSync(png)) throw new Error('Could not draw that page');
+  if (r.code !== 0 || !fs.existsSync(`${base}.png`)) { fs.rmSync(`${base}.png`, { force: true }); throw new Error('Could not draw that page'); }
+  fs.renameSync(`${base}.png`, png);
   return png;
 }
 
@@ -203,7 +237,11 @@ const clip = (rows: string[][]) => ({
   truncated: rows.length > MAX_ROWS || rows.some((r) => r.length > MAX_COLS),
 });
 
-async function sheetsOf(file: string): Promise<{ name: string; rows: string[][]; truncated: boolean }[]> {
+function sheetsOf(file: string): Promise<{ name: string; rows: string[][]; truncated: boolean }[]> {
+  return once(`sheets:${cacheKey(file)}`, () => readSheets(file));
+}
+
+async function readSheets(file: string): Promise<{ name: string; rows: string[][]; truncated: boolean }[]> {
   const dir = path.join(cacheDir(), cacheKey(file), 'sheets');
   if (!fs.existsSync(dir) || !fs.readdirSync(dir).some((f) => f.endsWith('.csv'))) {
     const work = path.join(cacheDir(), cacheKey(file), 'sheet-work');
@@ -234,8 +272,7 @@ export async function previewOf(botId: string, rel: string): Promise<FilePreview
   const readText = () => {
     const fd = fs.openSync(file, 'r');
     const buf = Buffer.alloc(Math.min(st.size, TEXT_LIMIT));
-    fs.readSync(fd, buf, 0, buf.length, 0);
-    fs.closeSync(fd);
+    try { fs.readSync(fd, buf, 0, buf.length, 0); } finally { fs.closeSync(fd); }
     return buf.toString('utf8');
   };
   const looksBinary = () => { const t = readText().slice(0, 4000); return t.includes('\0'); };
@@ -268,7 +305,8 @@ export function saveText(botId: string, rel: string, text: string, baseModifiedA
   if (baseModifiedAt && fs.existsSync(target) && Math.abs(fs.statSync(target).mtimeMs - baseModifiedAt) > 1) {
     throw Object.assign(new Error('The file changed since you opened it. Reload it and try again.'), { status: 409 });
   }
-  const tmp = `${target}.cleft-${process.pid}.tmp`;
+  // One temporary name per save: two saves at once must not write into the same temporary file.
+  const tmp = `${target}.cleft-${crypto.randomUUID()}.tmp`;
   fs.writeFileSync(tmp, text);
   fs.renameSync(tmp, target);
   return describe(botId, rel)!;
@@ -528,8 +566,7 @@ export async function fileText(ownerId: string, rel: string, offset = 0, max = 4
   if (kind === 'markdown' || kind === 'text' || kind === 'code' || kind === 'table' || kind === 'page') {
     const fd = fs.openSync(file, 'r');
     const buf = Buffer.alloc(Math.min(st.size, TEXT_LIMIT));
-    fs.readSync(fd, buf, 0, buf.length, 0);
-    fs.closeSync(fd);
+    try { fs.readSync(fd, buf, 0, buf.length, 0); } finally { fs.closeSync(fd); }
     if (buf.subarray(0, 4000).includes(0)) return { text: '', total: 0, note: 'It is not a text file, so it has no words to read.' };
     return slice(buf.toString('utf8'));
   }

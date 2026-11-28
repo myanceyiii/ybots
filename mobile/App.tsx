@@ -2,7 +2,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, AppState, BackHandler, Linking, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { client, loadSession, saveSession, signInWithLink, type Bot, type Client, type Machine, type Row, type SearchHit, type Session, type SideChat } from './src/api';
+import { client, loadSession, saveSession, signInWithLink, type Bot, type Client, type Machine, type NeedsItem, type Row, type SearchHit, type Session, type SideChat } from './src/api';
 import { History } from './src/screens/History';
 import { Search } from './src/screens/Search';
 import { flushOutbox, setOutboxAccount } from './src/outbox';
@@ -17,6 +17,8 @@ import { Permissions } from './src/screens/Permissions';
 import { Devices } from './src/screens/Devices';
 import { SystemStatus } from './src/screens/SystemStatus';
 import { Usage } from './src/screens/Usage';
+import { SavedLogins } from './src/screens/SavedLogins';
+import { Activity } from './src/screens/Activity';
 import { BotsComputer } from './src/screens/BotsComputer';
 import { Exchanges } from './src/screens/Exchanges';
 import { emitPageEvent, emitPagesEvent } from './src/pageBus';
@@ -29,6 +31,7 @@ import { getLive, setLive, updateLive } from './src/live';
 import { background, parseOpenLink, setNotifyAccount, startNotifications, stopNotifications } from './src/background';
 import { getDraft, setDraft, setDraftAccount } from './src/drafts';
 import { Computer } from './src/screens/Computer';
+import { TeachReview } from './src/screens/TeachReview';
 import { CustomLook } from './src/screens/CustomLook';
 import { Home } from './src/screens/Home';
 import { NewBot } from './src/screens/NewBot';
@@ -39,7 +42,8 @@ import { PillButton, UndoBar } from './src/components/ui';
 import { SplitPane } from './src/components/SplitPane';
 import { SideChatChip, SideChatSheet, canHaveSideChats } from './src/components/SideChats';
 import { onFresh, type FreshUndo } from './src/fresh';
-import { feedCallRows, getCall } from './src/voice/call';
+import { endCall, feedCallRows, getCall } from './src/voice/call';
+import { stopListening } from './src/voice/listen';
 import * as SystemUI from 'expo-system-ui';
 import { applyScheme, color, type, useScheme } from './src/theme';
 import { setScopedSignIn } from './src/simple';
@@ -48,8 +52,10 @@ import { kickConnection, resetConnection, streamHealthy, useConnection } from '.
 import { runBack } from './src/back';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { ConnectionBanner } from './src/components/ConnectionBanner';
+import { UpdateBanner, type AppSupport } from './src/components/UpdateBanner';
 import { parseQuickLink, watchShares, type Quick } from './src/quick';
 import { assistantBot, assistantPrefs, requestListen } from './src/assist';
+import { clearNeedsYou, refreshNeedsYou } from './src/needsYou';
 
 type Screen =
   | { name: 'welcome' } | { name: 'signin' } | { name: 'home' } | { name: 'newbot' } | { name: 'newgroup' }
@@ -57,7 +63,8 @@ type Screen =
   | { name: 'settings'; botId: string; tab?: SettingsTab }
   | { name: 'files'; botId: string; path?: string } | { name: 'pages'; botId: string } | { name: 'pcs' } | { name: 'tasks'; botId?: string } | { name: 'connectors' } | { name: 'plugins'; create?: boolean } | { name: 'plugincode'; draftId: string } | { name: 'pcscreen'; machine: Machine; mode?: 'watch' | 'control' }
   | { name: 'history'; botId: string; chatId: string; generation?: number; seq?: number } | { name: 'search' }
-  | { name: 'devicelink' } | { name: 'exchanges'; botId: string } | { name: 'permissions' } | { name: 'devices' } | { name: 'system' } | { name: 'usage' } | { name: 'botscomputer' };
+  | { name: 'teach'; botId: string }
+  | { name: 'devicelink' } | { name: 'exchanges'; botId: string } | { name: 'permissions' } | { name: 'devices' } | { name: 'system' } | { name: 'usage' } | { name: 'activity' } | { name: 'logins' } | { name: 'botscomputer' };
 
 /** Rows for one bot, by seq. A row the server updates comes again with the same seq and replaces the old one. */
 /** The same row as before? Then the object the chat already drew is kept, so that row is not drawn again. */
@@ -173,6 +180,8 @@ export default function App() {
   useEffect(() => watchShares((text) => { quick.current = { kind: 'ask', text }; setQuickTick((t) => t + 1); },
     () => { quick.current = { kind: 'assist' }; setQuickTick((t) => t + 1); }), []);
   const sessionRef = useRef(session);
+  /** Set below, once clearAccount exists: a sign-in link opened while signed in clears the old account first. */
+  const clearAccountRef = useRef<(() => Promise<void>) | null>(null);
   sessionRef.current = session;
   useEffect(() => {
     const handle = (url: string | null | undefined) => {
@@ -195,7 +204,12 @@ export default function App() {
       const go = async () => {
         if (signingIn.current) return;
         signingIn.current = true;
-        try { const s = await signInWithLink(link); await saveSession(s); setSession(s); }
+        try {
+          const s = await signInWithLink(link);
+          // Another account was signed in: everything it loaded goes first, as on Sign out.
+          if (sessionRef.current) await clearAccountRef.current?.();
+          await saveSession(s); setSession(s);
+        }
         catch (e: any) { Alert.alert('Sign-in failed', e?.message ?? 'Sign-in failed.'); }
         finally { signingIn.current = false; }
       };
@@ -214,16 +228,20 @@ export default function App() {
   const clearAccount = useCallback(async () => {
     accountEpoch.current += 1;
     stopNotifications();
+    // A call or a read-aloud of the last account stops with it, and nothing of it is kept in memory.
+    endCall(); stopListening();
     setOutboxAccount('', null, null);
+    setDraftAccount(''); setScopedSignIn(false); setLive([]);
     // The chats saved on the phone for a fast start go with the sign-in.
     const was = sessionRef.current;
     if (was) clearCache(`${was.server}|${was.email}`);
     await saveSession(null);
     gen.current = {}; chatEpoch.current = {}; loaded.current = {}; loadingRows.current = {};
     resetConnection();
-    setSession(null); setApi(null); setBots([]); setRows({}); setRowErrors({}); setEarlierErrors({}); setFocus(null); setWho(null); setSideChats({}); setActiveChat({}); setSideUndo(null);
+    clearNeedsYou(); setSession(null); setApi(null); setBots([]); setRows({}); setRowErrors({}); setEarlierErrors({}); setFocus(null); setWho(null); setSideChats({}); setActiveChat({}); setSideUndo(null);
     setStack([{ name: 'welcome' }]);
   }, []);
+  clearAccountRef.current = clearAccount;
   const signOut = useCallback(async () => {
     try { await api?.logout(); } catch { /* the token may already be gone */ }
     await clearAccount();
@@ -236,6 +254,7 @@ export default function App() {
       if (epoch !== accountEpoch.current) return null;
       setBots(bots);
       setLive(live ?? []);
+      refreshNeedsYou(a, 0);
       setBoot((b) => (b.state === 'ready' && !b.saved ? b : { state: 'ready' }));
       return bots;
     } catch (e: any) {
@@ -294,6 +313,16 @@ export default function App() {
     } finally { loadingEarlier.current[botId] = false; }
   }, []);
 
+  // Which apps the server still works with: checked once per client, and again when the server comes back
+  // from an update (it may need a newer app now). A server too old to answer just shows nothing.
+  const [support, setSupport] = useState<AppSupport | null>(null);
+  useEffect(() => {
+    if (!api) { setSupport(null); return; }
+    let live = true;
+    api.appSupport().then((s) => { if (live) setSupport(s); }).catch(() => {});
+    return () => { live = false; };
+  }, [api, boot.state]);
+
   // Signed in: make the client, fetch the bots, and follow the live event stream.
   useEffect(() => {
     if (!session) return;
@@ -350,6 +379,9 @@ export default function App() {
       void startNotifications(a, { ask: true, account });
     });
     const close = a.events((ev) => {
+      // The Needs you board (src/needsYou.ts) asks again after anything that could change it.
+      if ((ev.type === 'rows' && ev.rows.some((r: Row) => r.kind === 'card')) || ev.type === 'cleared' || ev.type === 'restored' || ev.type === 'tasks' || ev.type === 'roster'
+        || (ev.type === 'live' && (!!getLive(ev.state.botId)?.awaiting !== !!ev.state.awaiting || !!getLive(ev.state.botId)?.isRunning !== !!ev.state.isRunning))) refreshNeedsYou(a);
       if (ev.type === 'rows') {
         if ((gen.current[ev.botId] ?? ev.generation) !== ev.generation) { gen.current[ev.botId] = ev.generation; setRows((all) => ({ ...all, [ev.botId]: merge([], ev.rows) })); }
         else setRows((all) => ({ ...all, [ev.botId]: merge(all[ev.botId] ?? [], ev.rows) }));
@@ -592,6 +624,15 @@ export default function App() {
       return [...(base.length ? base : [startScreen(bots)]), { name: 'chat', botId: hit.botId }];
     });
   };
+  // A row of the Needs you board (src/needsYou.ts): the chat at its card, the bot's chat for a task it waits
+  // on, or Tasks for one it left behind. The card is answered there, the usual way.
+  const openNeeds = (it: NeedsItem) => {
+    if (it.kind === 'stalled') { push({ name: 'tasks' }); return; }
+    const b = bots.find((x) => x.id === it.botId);
+    if (!b) return;
+    if (!it.seq) { setActiveChat((a) => ({ ...a, [it.botId]: null })); openFromHome(b); return; }
+    openHit({ chatId: it.chatId, botId: it.botId, sideTitle: it.sideTitle, generation: 0, seq: it.seq, current: true, who: 'bot', from: null, snippet: it.title, at: it.at, len: 0, createdAt: it.at });
+  };
   const upsertBot = (b: Bot) => setBots((list) => (list.some((x) => x.id === b.id) ? list.map((x) => (x.id === b.id ? b : x)) : [...list, b]));
 
   // Opening a chat from the list beside an open chat swaps that chat rather than stacking another.
@@ -601,8 +642,8 @@ export default function App() {
       onRetry={() => { setBoot({ state: 'loading' }); kickConnection(); void loadBots(api); }} name={who ?? session.name ?? session.email} refreshing={refreshing} selectedId={selectedId}
       onRefresh={async () => { setRefreshing(true); if (!streamHealthy()) kickConnection(); await loadBots(api); setRefreshing(false); }}
       onOpen={openFromHome} onNewBot={limited ? undefined : () => push({ name: 'newbot' })} onNewGroup={limited ? undefined : () => push({ name: 'newgroup' })} onTasks={() => push({ name: 'tasks' })} onPcs={limited ? undefined : () => push({ name: 'pcs' })} onPlugins={limited ? undefined : (create?: boolean) => push({ name: 'plugins', create })} onSignOut={signOut} onDeviceLink={() => push({ name: 'devicelink' })}
-      onPermissions={limited ? undefined : () => push({ name: 'permissions' })} onDevices={() => push({ name: 'devices' })} onSystem={limited ? undefined : () => push({ name: 'system' })} onUsage={limited ? undefined : () => push({ name: 'usage' })} onBotsComputer={limited ? undefined : () => push({ name: 'botscomputer' })}
-      onBot={upsertBot} onHistory={(b) => push({ name: 'history', botId: b.id, chatId: b.id })} onSettings={(b) => push({ name: 'settings', botId: b.id })} onOpenHit={openHit} />
+      onPermissions={limited ? undefined : () => push({ name: 'permissions' })} onDevices={() => push({ name: 'devices' })} onSystem={limited ? undefined : () => push({ name: 'system' })} onUsage={limited ? undefined : () => push({ name: 'usage' })} onLogins={() => push({ name: 'logins' })} onActivity={limited ? undefined : () => push({ name: 'activity' })} onBotsComputer={limited ? undefined : () => push({ name: 'botscomputer' })}
+      onBot={upsertBot} onHistory={(b) => push({ name: 'history', botId: b.id, chatId: b.id })} onSettings={(b) => push({ name: 'settings', botId: b.id })} onOpenHit={openHit} onOpenNeeds={openNeeds} />
   ) : null;
   const split = (chat: React.ReactNode, selectedId: string | null) => (
     <SplitPane total={width} full={!!chat && chatFull} onFull={setChatFull} list={(w) => home(selectedId, w)}
@@ -660,6 +701,7 @@ export default function App() {
     const bot = botById(screen.botId)!;
     body = <BotSettings api={api} bot={bot} bots={bots} initialTab={screen.tab} onBack={pop} onBot={upsertBot}
       onComputer={() => push({ name: 'computer', botId: bot.id })}
+      onTeach={limited ? undefined : (review) => push(review ? { name: 'teach', botId: bot.id } : { name: 'computer', botId: bot.id })}
       onAsk={limited ? (text) => { setDraft(bot.id, text); backToChat(); } : undefined}
       onDeleted={() => { const left = bots.filter((b) => b.id !== bot.id); setBots(left); setStack([startScreen(left)]); }} />;
   } else if (screen.name === 'exchanges' && botById(screen.botId)) {
@@ -684,6 +726,10 @@ export default function App() {
     body = <Devices api={api} onBack={pop} />;
   } else if (screen.name === 'usage') {
     body = <Usage api={api} onBack={pop} />;
+  } else if (screen.name === 'logins') {
+    body = <SavedLogins api={api} onBack={pop} />;
+  } else if (screen.name === 'activity') {
+    body = <Activity api={api} onBack={pop} />;
   } else if (screen.name === 'system') {
     body = <SystemStatus api={api} onBack={pop} />;
   } else if (screen.name === 'botscomputer') {
@@ -697,7 +743,9 @@ export default function App() {
   } else if (screen.name === 'call' && botById(screen.botId)) {
     body = <Call api={api} bot={botById(screen.botId)!} rows={rows[screen.botId] ?? []} onBack={pop} />;
   } else if (screen.name === 'computer' && botById(screen.botId)) {
-    body = <Computer api={api} bot={botById(screen.botId)!} onBack={pop} />;
+    body = <Computer api={api} bot={botById(screen.botId)!} onBack={pop} onTeachReview={limited ? undefined : () => push({ name: 'teach', botId: screen.botId })} />;
+  } else if (screen.name === 'teach' && botById(screen.botId)) {
+    body = <TeachReview api={api} bot={botById(screen.botId)!} onBack={pop} />;
   } else if (screen.name === 'look' && botById(screen.botId)) {
     body = <CustomLook api={api} bot={botById(screen.botId)!} onBack={pop} onSaved={(b) => { upsertBot(b); pop(); }} />;
   } else if (screen.name === 'newbot') {
@@ -729,6 +777,7 @@ export default function App() {
     <SafeAreaProvider>
       <SafeAreaView style={{ flex: 1, backgroundColor: screen.name === 'computer' || screen.name === 'pcscreen' ? color.computer : color.ground }}>
         <StatusBar style={screen.name === 'computer' || screen.name === 'pcscreen' || scheme === 'dark' ? 'light' : 'dark'} />
+        {!!session && !!api && screen.name !== 'computer' && screen.name !== 'pcscreen' && screen.name !== 'call' && <UpdateBanner support={support} />}
         {!!session && !!api && screen.name !== 'computer' && screen.name !== 'pcscreen' && screen.name !== 'call' && (
           <ConnectionBanner state={connection} saved={!!boot.saved} onRetry={() => { kickConnection(); catchUp.current(); }} />
         )}

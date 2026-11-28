@@ -4,6 +4,8 @@ import { sideMax } from '../lib/paneWidths';
 import { RAIL, sidebarFit, sidebarMax, snapSidebar, type SidebarFit } from '../lib/sidebarFit';
 import { useConfigUI } from '../configStore';
 import { TasksIsland } from './config/TasksView';
+import { NeedsYouBoard } from './NeedsYouBoard';
+import { useNeedsYou } from '../lib/needsYou';
 import { PluginsIsland } from './config/PluginsIsland';
 import type { Bot } from '@shared/types';
 import { BotAvatarFor } from '../avatar/BotAvatar';
@@ -150,6 +152,8 @@ export function Sidebar() {
   const hiddenBots = useMemo(() => allBots.filter((b) => b.ownerHidden), [allBots]);
   const [hiddenMenu, setHiddenMenu] = useState(false);
   const live = useStore((s) => s.live);
+  const needsItems = useNeedsYou((s) => s.items);
+  const needsIds = useMemo(() => new Set(needsItems.map((i) => i.botId)), [needsItems]);
   const storeSelectedBotId = useStore((s) => s.selectedBotId);
   const inTasks = useConfigUI((s) => s.view === 'tasks');
   const selectedBotId = inTasks ? null : storeSelectedBotId; // nothing highlighted while the Tasks view is open
@@ -201,7 +205,8 @@ export function Sidebar() {
   const primary = bots.find((b) => b.isPrimary);
   // The primary bot is the first row of the list (emphasised), not a separate tile above it.
   const isUnread = (b: Bot) => b.unread > 0 || !!keptUnread[b.id] || !!b.sideChats?.unread;
-  const needsYou = (b: Bot) => !!live[b.id]?.awaiting;
+  // Waiting on the person: the bot says so (live.awaiting) or the Needs you board has something of its (needs-you.ts).
+  const needsYou = (b: Bot) => !!live[b.id]?.awaiting || needsIds.has(b.id);
   const shows = (b: Bot) => filter === 'all' || (filter === 'unread' ? isUnread(b) : needsYou(b));
   const counts = { unread: bots.filter(isUnread).length, needs: bots.filter(needsYou).length };
   // Pinned chats come first, then the most recent.
@@ -326,6 +331,7 @@ export function Sidebar() {
       </div>
 
       <div className="sidebar__scroll">
+        <NeedsYouBoard bots={bots} collapsed={collapsed || fit.name < 1} />
         <TasksIsland />
         {!scoped && <PluginsIsland />}
         {!collapsed && fit.name >= 1 && bots.length > 1 && (

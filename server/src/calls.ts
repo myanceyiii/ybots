@@ -241,16 +241,22 @@ export async function think(botRef: string, brief: string, turns: Turn[]): Promi
   if (info.status !== 'ready') throw Object.assign(new Error(`${bot.name}'s engine is ${info.status}`), { status: 503 });
   const engine = await engineFor(bot.id);
   const list = candidates(info);
+  // The same checks as the other paths (a repeated line, speaking as the caller): a turn that fails them is
+  // kept only as a last resort, when no other model gives a clean one.
+  let flawed: (CallReply & { ms: number; model: string | null; tried: number }) | null = null;
   for (const choice of list) {
     tried++;
     try {
       const reply = parseReply(await withToolsOff(bot.id, () => ask(engine, choice, instructions, input)));
       if (reply.invalid) { console.warn(`[calls] ${choice.provider ?? '?'}/${choice.model ?? '?'} gave no usable turn; trying the next model`); continue; }
+      const problem = turnProblem(reply.say, turns);
+      if (problem) { console.warn(`[calls] ${choice.provider ?? '?'}/${choice.model ?? '?'}: ${problem}; trying the next model`); flawed ??= { ...reply, ms: 0, model: choice.model ?? null, tried }; continue; }
       return { ...reply, ms: Date.now() - started, model: choice.model, tried };
     } catch (e: any) {
       console.warn(`[calls] ${choice.provider ?? '?'}/${choice.model ?? '?'} failed: ${String(e?.message ?? e).slice(0, 120)}`);
     }
   }
+  if (flawed) return { ...flawed, ms: Date.now() - started, tried };
   throw Object.assign(new Error('No model gave a usable turn.'), { status: 502 });
 }
 

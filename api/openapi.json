@@ -1,0 +1,5545 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "YBots",
+    "version": "1",
+    "description": "Generated from server/src/api-contract.ts by scripts/api/generate.mjs. Do not edit. Rules: docs/api-contract.md."
+  },
+  "paths": {
+    "/api/app-support": {
+      "get": {
+        "operationId": "GET /api/app-support",
+        "description": "Which apps this server still works with (app-support.ts). Needs no sign-in, so an app can check before it signs in. `updateUrl` is where to get a newer app, when the server is told (ANDROID_UPDATE_URL).",
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "api": {
+                      "type": "number"
+                    },
+                    "minApp": {
+                      "type": "object",
+                      "properties": {
+                        "android": {
+                          "type": "string"
+                        },
+                        "windows": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "android",
+                        "windows"
+                      ]
+                    },
+                    "updateUrl": {
+                      "type": "object",
+                      "properties": {
+                        "android": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "android"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "api",
+                    "minApp",
+                    "updateUrl"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/approvals/{id}": {
+      "post": {
+        "operationId": "POST /api/approvals/{id}",
+        "description": "Answer an approval card, bound to the card by its `digest`. Only a person can (code agent_session).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "allow",
+                      "always",
+                      "conversation",
+                      "deny"
+                    ]
+                  },
+                  "digest": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "decision",
+                  "digest"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "approval": {
+                      "$ref": "#/components/schemas/ApprovalAnswer"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "approval"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bots": {
+      "get": {
+        "operationId": "GET /api/bots",
+        "description": "Every bot, group and side chat the sign-in may see, with what each is doing now.",
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "bots": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Bot"
+                      }
+                    },
+                    "live": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/LiveState"
+                      }
+                    }
+                  },
+                  "required": [
+                    "bots",
+                    "live"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bots/{id}/cards/{seq}/answer": {
+      "post": {
+        "operationId": "POST /api/bots/{id}/cards/{seq}/answer",
+        "description": "Answer a bot's question card.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "seq",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "generation",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "answer": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "answer"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bots/{id}/interrupt": {
+      "post": {
+        "operationId": "POST /api/bots/{id}/interrupt",
+        "description": "Stop the chat's running turn, or in a group one `member`'s. `stopped` names who was stopped.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "member": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "stopped": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "stopped"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bots/{id}/messages": {
+      "post": {
+        "operationId": "POST /api/bots/{id}/messages",
+        "description": "Send a message (or, with `editOf`, change one). `clientId` names the send: sending it again after a dropped connection answers the row already there with `duplicate`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "editOf": {
+                    "type": "number"
+                  },
+                  "attachments": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "clientId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "row": {
+                      "$ref": "#/components/schemas/Row"
+                    },
+                    "duplicate": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "row"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bots/{id}/pages": {
+      "get": {
+        "operationId": "GET /api/bots/{id}/pages",
+        "description": "One Page, with the chat its buttons send into.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageAnswer"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bots/{id}/pages/ops": {
+      "post": {
+        "operationId": "POST /api/bots/{id}/pages/ops",
+        "description": "Change a Page: each op answers in `results`, in order.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "ops": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/PageOp"
+                    }
+                  }
+                },
+                "required": [
+                  "path",
+                  "ops"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "page": {
+                      "$ref": "#/components/schemas/Page"
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PageOpResult"
+                      }
+                    }
+                  },
+                  "required": [
+                    "page",
+                    "results"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bots/{id}/routines": {
+      "get": {
+        "operationId": "GET /api/bots/{id}/routines",
+        "description": "A bot's routines.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "routines": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Routine"
+                      }
+                    }
+                  },
+                  "required": [
+                    "routines"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bots/{id}/rows": {
+      "get": {
+        "operationId": "GET /api/bots/{id}/rows",
+        "description": "A chat's rows, newest last: the latest `limit`, or the `limit` rows before `beforeSeq`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "beforeSeq",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generation": {
+                      "type": "number"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Row"
+                      }
+                    }
+                  },
+                  "required": [
+                    "generation",
+                    "rows"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bots/{id}/rows/{seq}/reactions": {
+      "post": {
+        "operationId": "POST /api/bots/{id}/rows/{seq}/reactions",
+        "description": "Add an emoji to a message, or take it off again (`added` false).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "seq",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "emoji": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "emoji"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "reactions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Reaction"
+                      }
+                    },
+                    "added": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "reactions",
+                    "added"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bots/{id}/side-chats": {
+      "get": {
+        "operationId": "GET /api/bots/{id}/side-chats",
+        "description": "A bot's side chats. `allowed` false (with `why`) when this bot cannot have them.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "chats": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SideChat"
+                      }
+                    },
+                    "allowed": {
+                      "type": "boolean"
+                    },
+                    "why": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "chats",
+                    "allowed",
+                    "why"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "POST /api/bots/{id}/side-chats",
+        "description": "Start a side chat, with an optional title.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "chat": {
+                      "$ref": "#/components/schemas/SideChat"
+                    }
+                  },
+                  "required": [
+                    "chat"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bots/{id}/tasks": {
+      "get": {
+        "operationId": "GET /api/bots/{id}/tasks",
+        "description": "One bot's tasks.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tasks": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Task"
+                      }
+                    }
+                  },
+                  "required": [
+                    "tasks"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bots/{id}/tasks/{taskId}": {
+      "delete": {
+        "operationId": "DELETE /api/bots/{id}/tasks/{taskId}",
+        "description": "Delete a task. `removed` is the whole task, for Undo.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "removed": {
+                      "$ref": "#/components/schemas/RemovedTask"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "removed"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "PATCH /api/bots/{id}/tasks/{taskId}",
+        "description": "The person changes a task's title, note or state.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "note": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "working",
+                      "needs_input",
+                      "done"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "task": {
+                      "$ref": "#/components/schemas/Task"
+                    }
+                  },
+                  "required": [
+                    "task"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bots/{id}/tasks/restore": {
+      "post": {
+        "operationId": "POST /api/bots/{id}/tasks/restore",
+        "description": "Undo a task's delete: send back the `removed` task.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemovedTask"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "task": {
+                      "$ref": "#/components/schemas/Task"
+                    }
+                  },
+                  "required": [
+                    "task"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/needs-you": {
+      "get": {
+        "operationId": "GET /api/needs-you",
+        "description": "Everything waiting on the person across every bot (needs-you.ts).",
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/NeedsItem"
+                      }
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/routines/{id}": {
+      "delete": {
+        "operationId": "DELETE /api/routines/{id}",
+        "description": "Delete a routine.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "PATCH /api/routines/{id}",
+        "description": "Switch a routine on or off, or set \"post only when something is found\". Send at least one.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "quiet": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "routine": {
+                      "$ref": "#/components/schemas/Routine"
+                    }
+                  },
+                  "required": [
+                    "routine"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/routines/{id}/run": {
+      "post": {
+        "operationId": "POST /api/routines/{id}/run",
+        "description": "Run a routine now.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/side-chats/{id}": {
+      "delete": {
+        "operationId": "DELETE /api/side-chats/{id}",
+        "description": "Delete a side chat. It can be brought back (restore) until `undoUntil`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "undoUntil": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "undoUntil"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "PATCH /api/side-chats/{id}",
+        "description": "Rename a side chat. Answers the bot's side chats after the change.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "chats": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SideChat"
+                      }
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "chats"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/side-chats/{id}/restore": {
+      "post": {
+        "operationId": "POST /api/side-chats/{id}/restore",
+        "description": "Undo a side chat's delete.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "chats": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SideChat"
+                      }
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "chats"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks": {
+      "get": {
+        "operationId": "GET /api/tasks",
+        "description": "Every bot's tasks, newest first.",
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tasks": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Task"
+                      }
+                    }
+                  },
+                  "required": [
+                    "tasks"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "x-events": {
+    "path": "/api/events",
+    "contentType": "text/event-stream",
+    "schema": {
+      "$ref": "#/components/schemas/ServerEvent",
+      "description": "GET /api/events: a text/event-stream of these, one JSON object per `data:` line, each with an `id:` the app sends back (Last-Event-ID or ?after=) to get what it missed. Apps ignore a `type` they do not know."
+    }
+  },
+  "components": {
+    "schemas": {
+      "ActivityKind": {
+        "type": "string",
+        "enum": [
+          "thinking",
+          "working",
+          "searching_web",
+          "reading_web",
+          "browsing_web",
+          "on_its_computer",
+          "running_commands",
+          "waiting_on_command",
+          "messaging_named",
+          "connecting_service",
+          "waiting_for_you",
+          "drafting_file",
+          "remembering"
+        ]
+      },
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "What a refused or failed call answers (4xx, 5xx). `code` names a refusal an app can act on."
+      },
+      "ApprovalAnswer": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "botId": {
+            "type": "string"
+          },
+          "botName": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "resolvedAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "answeredBy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "answeredVia": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "botId",
+          "botName",
+          "tool",
+          "title",
+          "detail",
+          "status",
+          "resolvedAt",
+          "answeredBy",
+          "answeredVia"
+        ],
+        "description": "An approval card after it was answered (agent/loop.ts approvalReadback)."
+      },
+      "AvatarColor": {
+        "type": "string",
+        "enum": [
+          "black",
+          "brown",
+          "red",
+          "orange",
+          "yellow",
+          "green",
+          "cyan",
+          "blue",
+          "violet",
+          "magenta",
+          "gray"
+        ]
+      },
+      "AvatarPoseJob": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "making",
+              "ready",
+              "stopped"
+            ]
+          },
+          "done": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          },
+          "failed": {
+            "type": "number"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "done",
+          "total",
+          "failed"
+        ]
+      },
+      "AvatarShape": {
+        "type": "string",
+        "enum": [
+          "blob",
+          "pebble",
+          "bean",
+          "egg",
+          "squircle",
+          "tablet",
+          "capsule",
+          "cylinder",
+          "hex",
+          "gem",
+          "crystal",
+          "wedge",
+          "shield",
+          "dome",
+          "arch",
+          "cloud",
+          "teardrop",
+          "leaf",
+          "square",
+          "sparkle",
+          "clover",
+          "flower",
+          "heart",
+          "house",
+          "star"
+        ]
+      },
+      "Bot": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "instructions": {
+            "type": "string"
+          },
+          "avatarShape": {
+            "$ref": "#/components/schemas/AvatarShape"
+          },
+          "avatarColor": {
+            "$ref": "#/components/schemas/AvatarColor"
+          },
+          "chatColor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChatColor"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The bot's colour in chats (chat-colors.ts): its name, bar and bubble tint where it posts in another bot's chat or a group. Null for a group. `chatColorAuto` = picked for it, not set in settings."
+          },
+          "chatColorAuto": {
+            "type": "boolean"
+          },
+          "avatarImageUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A picture that replaces the shape (GET it with the session), or null for the shape."
+          },
+          "avatarPoses": {
+            "type": "object",
+            "properties": {
+              "idle": {
+                "type": "string"
+              },
+              "listening": {
+                "type": "string"
+              },
+              "thinking": {
+                "type": "string"
+              },
+              "talking": {
+                "type": "string"
+              },
+              "working": {
+                "type": "string"
+              },
+              "searching": {
+                "type": "string"
+              },
+              "waiting": {
+                "type": "string"
+              },
+              "happy": {
+                "type": "string"
+              },
+              "celebrating": {
+                "type": "string"
+              },
+              "sleeping": {
+                "type": "string"
+              },
+              "oops": {
+                "type": "string"
+              }
+            },
+            "description": "Pictures of the bot's character in each pose (avatar-poses.ts), made from its picture. Empty for a shape."
+          },
+          "avatarPoseJob": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AvatarPoseJob"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Making the poses: 'making' while it runs; done/total count the poses."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "teammate"
+            ]
+          },
+          "isPrimary": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "room"
+            ],
+            "description": "'room' = group chat (members answer instead of the bot itself)."
+          },
+          "outside": {
+            "type": "object",
+            "properties": {
+              "via": {
+                "type": "string",
+                "const": "slack"
+              },
+              "channelName": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "ready",
+                  "paused",
+                  "offline",
+                  "not-set-up"
+                ]
+              },
+              "waiting": {
+                "type": "number"
+              },
+              "callUrl": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "via",
+              "channelName",
+              "status",
+              "waiting",
+              "callUrl"
+            ],
+            "description": "Set for an outside member (outside.ts): it lives elsewhere and is reached through a link."
+          },
+          "waitingFor": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "since": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "since"
+              ]
+            },
+            "description": "Messages this bot or group sent to an outside member that are still waiting for an answer."
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "ownerHidden": {
+            "type": "boolean",
+            "description": "Hidden from the owner's own view (Alex hid a bot): apps leave it out of the home list, pickers and unread counts, and the server sends no notifications about it to the main profile. The bot works as before (other bots and groups still reach it, it stays on the team), and a scoped sign-in (Sam) never sees this as true."
+          },
+          "effort": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ]
+          },
+          "visuals": {
+            "$ref": "#/components/schemas/VisualsLevel",
+            "description": "How often it uses answer views, calculators, tap choices and Pages (visuals-level.ts). Not on a group."
+          },
+          "busySend": {
+            "$ref": "#/components/schemas/BusySend",
+            "description": "What a message sent while it works does (steer-mode.ts): steer (default), queue or interrupt."
+          },
+          "webSearch": {
+            "type": "boolean",
+            "description": "Searches the web and reads pages by API (web-search.ts); off = no web_search/web_extract. Not on a group."
+          },
+          "phoneActions": {
+            "type": "boolean",
+            "description": "May set timers and alarms in the phone's Clock app (phone.ts). Not on a group."
+          },
+          "voice": {
+            "type": "string",
+            "description": "Voice chat settings: xAI voice id, speed multiplier (0.7–1.5), BCP-47 language or 'auto'."
+          },
+          "voiceSpeed": {
+            "type": "number"
+          },
+          "voiceLanguage": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Hermes engine: model id and provider for this bot; null = the engine's default."
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "modelMode": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "auto"
+            ],
+            "description": "'auto' = each turn picks a tier from modelTiers by how hard it looks (server/src/model-router.ts)."
+          },
+          "modelTiers": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "light": {
+                    "$ref": "#/components/schemas/ModelTierChoice"
+                  },
+                  "standard": {
+                    "$ref": "#/components/schemas/ModelTierChoice"
+                  },
+                  "heavy": {
+                    "$ref": "#/components/schemas/ModelTierChoice"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "providerLock": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When set, the bot never runs on another provider."
+          },
+          "generation": {
+            "type": "number"
+          },
+          "unread": {
+            "type": "number"
+          },
+          "sideChats": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "number"
+              },
+              "unread": {
+                "type": "number"
+              },
+              "running": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "count",
+              "unread",
+              "running"
+            ],
+            "description": "Its side chats (side-chats.ts), when it has any: how many, unread replies in them, and how many are working now."
+          },
+          "lastPreview": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The list's line under the name: whole sentences, never cut mid-text (list-preview.ts)."
+          },
+          "previewShort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The same line in at most 48 characters, for rows too narrow for lastPreview."
+          },
+          "previewForms": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Every whole form of the line, longest first (lastPreview ... previewShort); apps show the first that fits."
+          },
+          "previewBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "bot",
+              "member",
+              "you",
+              "other",
+              "card",
+              "event",
+              "summary",
+              null
+            ],
+            "description": "Who the line is about: the bot's own words, a group member's, you or another sender, a card, an event, or an AI summary."
+          },
+          "lastActivityAt": {
+            "type": "number"
+          },
+          "createdAt": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "label",
+          "description",
+          "instructions",
+          "avatarShape",
+          "avatarColor",
+          "avatarImageUrl",
+          "avatarPoses",
+          "avatarPoseJob",
+          "mode",
+          "isPrimary",
+          "pinned",
+          "effort",
+          "voice",
+          "voiceSpeed",
+          "voiceLanguage",
+          "model",
+          "provider",
+          "modelMode",
+          "modelTiers",
+          "providerLock",
+          "generation",
+          "unread",
+          "lastPreview",
+          "lastActivityAt",
+          "createdAt"
+        ]
+      },
+      "BusySend": {
+        "type": "string",
+        "enum": [
+          "steer",
+          "queue",
+          "interrupt"
+        ],
+        "description": "What a message you send while a bot is still working on its reply does, set per bot (and per group) in its settings (\"While it's working\"). Alex asked for steering as the default on 2026-11-24.\n\n - steer: the message joins the reply being worked on. It is handed to the bot's Hermes at the next safe    point (after the tool step it is on; Hermes' own mid-turn steering, agent.steer), and the bot is told it    is a note about the task in hand. If the reply ends before the bot reaches a safe point, the message    simply becomes the next turn. Nothing is stopped and approval cards stay open.  - queue: the message waits until the reply is finished and then starts a turn of its own (the old    behaviour). An open approval card expires, as before.  - interrupt: the reply being worked on is stopped (like Stop) and the message starts a new turn.\n\nStop works the same in every mode. A steering message is never an approval of anything."
+      },
+      "CardBody": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "card"
+              },
+              "card": {
+                "type": "string",
+                "const": "approval"
+              },
+              "approvalId": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "tool": {
+                "type": "string"
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Every tool this card asks about; \"Always allow\" covers exactly these. Absent on older cards."
+              },
+              "toolkit": {
+                "type": "string"
+              },
+              "toolkitName": {
+                "type": "string"
+              },
+              "logo": {
+                "type": "string"
+              },
+              "args": {},
+              "digest": {
+                "type": "string",
+                "description": "Hash of what this card shows; a client sends it back with its answer (absent on older cards)."
+              },
+              "canAlways": {
+                "type": "boolean",
+                "description": "\"Always allow\" is offered (the card lists what it covers; allow-rules.ts). Absent on older cards."
+              },
+              "lowRisk": {
+                "type": "boolean",
+                "description": "No listed tool is in a risky class. Notifications offer Allow/Deny only on these."
+              },
+              "risk": {
+                "type": "string",
+                "description": "The risky class of a listed tool (shell, files, delete, message, money, host, install, browser, computer, schedule)."
+              },
+              "alwaysNote": {
+                "type": "string",
+                "description": "A one-line warning for a risky tool, shown next to \"Always allow\"."
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "allowed",
+                  "always",
+                  "conversation",
+                  "denied",
+                  "expired"
+                ]
+              },
+              "canConversation": {
+                "type": "boolean",
+                "description": "\"Allow for this conversation\" is offered (conversation-allows.ts): wherever \"Always allow\" is, but mail, calls, browser cards and plans."
+              },
+              "convOff": {
+                "type": "number",
+                "description": "When the person turned off what this card allowed for the conversation (the line above the message box)."
+              },
+              "kind": {
+                "type": "string",
+                "description": "The kind of action (action-kinds.ts: delete, send, share, post, pay, credentials), its short name and what it does."
+              },
+              "kindName": {
+                "type": "string"
+              },
+              "kindSays": {
+                "type": "string"
+              },
+              "handoff": {
+                "type": "boolean",
+                "description": "A hand-off: the person does it themselves (a password change on a website). \"I did it myself\" / \"Don't do it\"."
+              },
+              "answeredBy": {
+                "type": "string",
+                "description": "Who answered, and from where (\"web\", \"Windows app\", \"phone app\", \"voice call\"). Absent on older cards."
+              },
+              "answeredVia": {
+                "type": "string"
+              },
+              "mail": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "type": "string"
+                  },
+                  "cc": {
+                    "type": "string"
+                  },
+                  "bcc": {
+                    "type": "string"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "html": {
+                    "type": "boolean"
+                  },
+                  "attachments": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "replyAll": {
+                    "type": "boolean"
+                  },
+                  "threadId": {
+                    "type": "string"
+                  },
+                  "forwardOf": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "other": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "value": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "value"
+                      ]
+                    }
+                  },
+                  "incomplete": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from",
+                  "to",
+                  "cc",
+                  "bcc",
+                  "subject",
+                  "body",
+                  "html",
+                  "attachments",
+                  "replyAll",
+                  "threadId",
+                  "forwardOf"
+                ],
+                "description": "Set on an email send (allow-rules.ts isMailSend): the whole email, shown in full. The card's Send is \"allow\"; it never offers \"Always allow\" and cannot be answered from a notification."
+              },
+              "sendResult": {
+                "type": "object",
+                "properties": {
+                  "ok": {
+                    "type": "boolean"
+                  },
+                  "detail": {
+                    "type": "string"
+                  },
+                  "at": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "ok",
+                  "detail",
+                  "at"
+                ],
+                "description": "What the real send returned after Send was pressed."
+              },
+              "secret": {
+                "$ref": "#/components/schemas/SecretOnCard",
+                "description": "A secure input card (browser-cards.ts): the person types a password, code or card detail into a masked box and the server types it into this field of the bot's browser. The value is never on the card."
+              },
+              "purchase": {
+                "$ref": "#/components/schemas/PurchaseOnCard",
+                "description": "A purchase card (browser-cards.ts): what the checkout page shows, read by the server, not the bot."
+              },
+              "screenHelp": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  },
+                  "site": {
+                    "type": "string"
+                  },
+                  "note": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reason",
+                  "site",
+                  "note"
+                ],
+                "description": "A needs-you card: a CAPTCHA, passkey or app approval the person does on the bot's screen."
+              },
+              "vault": {
+                "$ref": "#/components/schemas/VaultOnCard",
+                "description": "A saved-login card (vault.ts): the owner's Sign in types a saved login into the bot's page. No values."
+              },
+              "postingPlan": {
+                "$ref": "#/components/schemas/PostingPlanOnCard",
+                "description": "A posting plan card (posting.ts): every day's video, cover and posts, with a switch per day. The answer carries the days left on (routes.ts /approvals/:id/plan)."
+              }
+            },
+            "required": [
+              "type",
+              "card",
+              "approvalId",
+              "title",
+              "detail",
+              "tool",
+              "args",
+              "status"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "card"
+              },
+              "card": {
+                "type": "string",
+                "const": "question"
+              },
+              "question": {
+                "type": "string"
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "answered",
+                  "dismissed"
+                ]
+              },
+              "answer": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "card",
+              "question",
+              "options",
+              "status"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "card"
+              },
+              "card": {
+                "type": "string",
+                "const": "connect"
+              },
+              "toolkit": {
+                "type": "string"
+              },
+              "toolkitName": {
+                "type": "string"
+              },
+              "logo": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "connected",
+                  "skipped"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "card",
+              "toolkit",
+              "toolkitName",
+              "reason",
+              "status"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "card"
+              },
+              "card": {
+                "type": "string",
+                "const": "plugin"
+              },
+              "pluginId": {
+                "type": "string",
+                "description": "The plugin that made it, and its name as the owner knows it."
+              },
+              "pluginName": {
+                "type": "string"
+              },
+              "view": {
+                "$ref": "#/components/schemas/PluginCard",
+                "description": "Validated data only (plugins/ui-schema.ts); the apps render it, nothing in it runs."
+              }
+            },
+            "required": [
+              "type",
+              "card",
+              "pluginId",
+              "pluginName",
+              "view"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "card"
+              },
+              "card": {
+                "type": "string",
+                "const": "plugin-plan"
+              },
+              "draftId": {
+                "type": "string",
+                "description": "A bot's plan for a new plugin (plugins/builder.ts). Only the owner's Build starts it."
+              },
+              "title": {
+                "type": "string"
+              },
+              "purpose": {
+                "type": "string"
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "writes": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "description",
+                    "writes"
+                  ]
+                }
+              },
+              "network": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "building",
+                  "built",
+                  "dismissed"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "card",
+              "draftId",
+              "title",
+              "purpose",
+              "tools",
+              "network",
+              "status"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "card"
+              },
+              "card": {
+                "type": "string",
+                "const": "plugin-review"
+              },
+              "draftId": {
+                "type": "string",
+                "description": "The checked draft. Install sends `digest` back; only the owner can, and never by voice."
+              },
+              "title": {
+                "type": "string"
+              },
+              "digest": {
+                "type": "string"
+              },
+              "checks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "ok",
+                    "detail"
+                  ]
+                }
+              },
+              "notes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "writes": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "description",
+                    "writes"
+                  ]
+                }
+              },
+              "network": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "pluginId": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "failed",
+                  "installed",
+                  "rejected",
+                  "removed",
+                  "superseded"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "card",
+              "draftId",
+              "title",
+              "digest",
+              "checks",
+              "notes",
+              "tools",
+              "network",
+              "files",
+              "status"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "card"
+              },
+              "card": {
+                "type": "string",
+                "const": "look"
+              },
+              "intent": {
+                "type": "string",
+                "enum": [
+                  "tweak",
+                  "new",
+                  "default"
+                ],
+                "description": "A bot offering new looks for itself (avatars.ts). Nothing changes until the owner picks one; the bot cannot choose. Pictures are served from /api/bots/:id/look/:candidateId."
+              },
+              "description": {
+                "type": "string"
+              },
+              "style": {
+                "type": "string"
+              },
+              "count": {
+                "type": "number"
+              },
+              "candidates": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "chosen": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "error": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "making",
+                  "pending",
+                  "applied",
+                  "dismissed",
+                  "failed"
+                ]
+              },
+              "resumes": {
+                "type": "number",
+                "description": "How many times drawing was started again after a server restart (avatars.ts resumeLookWork)."
+              }
+            },
+            "required": [
+              "type",
+              "card",
+              "intent",
+              "description",
+              "count",
+              "candidates",
+              "status"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "card"
+              },
+              "card": {
+                "type": "string",
+                "const": "files"
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ChatFile"
+                },
+                "description": "Files a turn wrote in the bot's workspace (files.ts changedSince); each opens in the file pane."
+              }
+            },
+            "required": [
+              "type",
+              "card",
+              "files"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "card"
+              },
+              "card": {
+                "type": "string",
+                "const": "look-reveal"
+              },
+              "candidateId": {
+                "type": "string",
+                "description": "The chosen picture (a candidate id), shown big with a share button and follow-up ideas."
+              },
+              "suggestions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "type",
+              "card",
+              "candidateId",
+              "suggestions"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "card"
+              },
+              "card": {
+                "type": "string",
+                "const": "skill-proposal"
+              },
+              "fromBotId": {
+                "type": "string",
+                "description": "A group member proposing a group skill after working on something together (rooms.ts). Nothing is saved until a person presses Save; a bot cannot answer this card."
+              },
+              "fromBotName": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string"
+              },
+              "skillId": {
+                "type": "string",
+                "description": "The saved skill's id (skills table, bot_id = the group)."
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "saved",
+                  "dismissed"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "card",
+              "fromBotId",
+              "fromBotName",
+              "name",
+              "description",
+              "body",
+              "status"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "card"
+              },
+              "card": {
+                "type": "string",
+                "const": "view"
+              },
+              "title": {
+                "type": "string",
+                "description": "An answer view (views.ts): tables, charts, picks, forms and checklists a bot puts in its reply. Data only; the apps draw it. A press or a Send posts a chat message as the person, so it is never an approval."
+              },
+              "blocks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ViewBlock"
+                }
+              },
+              "text": {
+                "type": "string",
+                "description": "The same content as markdown, for previews, voice, other bots and apps that cannot draw it."
+              },
+              "from": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ],
+                "description": "Set when a group member posted it."
+              },
+              "viewId": {
+                "type": "string",
+                "description": "The id the bot uses to change this view later (update_view), and when it last did."
+              },
+              "updatedAt": {
+                "type": "number"
+              },
+              "pagePath": {
+                "type": "string",
+                "description": "The Page a person made from it (Open as Page), in the bot's workspace."
+              },
+              "quick": {
+                "type": "boolean",
+                "description": "Choice buttons (choices.ts): one choice block drawn as a row of buttons under the reply, no card around it. `auto` when the server spotted the question rather than the bot offering them."
+              },
+              "auto": {
+                "type": "boolean"
+              },
+              "checkin": {
+                "type": "object",
+                "properties": {
+                  "subject": {
+                    "type": "string"
+                  },
+                  "focus": {
+                    "type": "string"
+                  },
+                  "link": {
+                    "type": "string"
+                  },
+                  "timezone": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "subject"
+                ],
+                "description": "Check-in offer (checkin-offer.ts): the choice buttons offer to keep an eye on `subject`, and a tap makes a quiet routine for the bot instead of posting a chat message. Never an approval."
+              },
+              "pin": {
+                "type": "object",
+                "properties": {
+                  "on": {
+                    "type": "boolean"
+                  },
+                  "by": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "bot",
+                      "person"
+                    ]
+                  },
+                  "at": {
+                    "type": "number"
+                  },
+                  "doneAt": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "on",
+                  "by",
+                  "at"
+                ],
+                "description": "Pinned board (board-pin.ts): kept in reach above the message box until it is done or let go."
+              }
+            },
+            "required": [
+              "type",
+              "card",
+              "title",
+              "blocks",
+              "text"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "card"
+              },
+              "card": {
+                "type": "string",
+                "const": "draft"
+              },
+              "channel": {
+                "type": "string",
+                "enum": [
+                  "email",
+                  "slack",
+                  "message"
+                ]
+              },
+              "to": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "approvalId": {
+                "type": "string"
+              },
+              "digest": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "sent",
+                  "discarded"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "card",
+              "channel",
+              "to",
+              "text",
+              "approvalId",
+              "status"
+            ]
+          }
+        ]
+      },
+      "ChatColor": {
+        "type": "string",
+        "enum": [
+          "brown",
+          "red",
+          "orange",
+          "yellow",
+          "green",
+          "cyan",
+          "blue",
+          "violet",
+          "magenta"
+        ]
+      },
+      "ChatFile": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "type": "number"
+          },
+          "modifiedAt": {
+            "type": "number"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FileKind"
+          }
+        },
+        "required": [
+          "path",
+          "name",
+          "size",
+          "modifiedAt",
+          "kind"
+        ],
+        "description": "A file in a bot's workspace; `path` is relative to the workspace."
+      },
+      "ComputerState": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "absent",
+              "creating",
+              "starting",
+              "running",
+              "suspending",
+              "suspended",
+              "resuming",
+              "error",
+              "stopped"
+            ]
+          },
+          "orgoId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "screens": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "botId": {
+                  "type": "string"
+                },
+                "screenId": {
+                  "type": "string"
+                },
+                "width": {
+                  "type": "number"
+                },
+                "height": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "botId",
+                "screenId"
+              ]
+            },
+            "description": "One screen per bot on the shared computer. width/height are the screen's pixel size."
+          },
+          "maxScreens": {
+            "type": "number",
+            "description": "How many bots can have their own screen at once."
+          }
+        },
+        "required": [
+          "status",
+          "orgoId",
+          "error",
+          "screens"
+        ]
+      },
+      "EventBody": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "event"
+          },
+          "event": {
+            "type": "string",
+            "enum": [
+              "routine-created",
+              "routine-updated",
+              "routine-run",
+              "task-changed",
+              "bot-message",
+              "conversation-cleared",
+              "computer",
+              "voice-call"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "call": {
+            "$ref": "#/components/schemas/VoiceCallRecord",
+            "description": "voice-call only: the call record (set on the end-of-call row)."
+          }
+        },
+        "required": [
+          "type",
+          "event",
+          "text"
+        ]
+      },
+      "FileKind": {
+        "type": "string",
+        "enum": [
+          "markdown",
+          "text",
+          "code",
+          "table",
+          "image",
+          "pdf",
+          "office",
+          "sheet",
+          "page",
+          "other"
+        ],
+        "description": "How the file pane shows a file (server/src/files.ts). 'office' = Word/PowerPoint pages, 'sheet' = spreadsheet tables."
+      },
+      "LiveModel": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The model id, or null when the engine's own default answers."
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "effort": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ]
+          },
+          "tier": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "light",
+              "standard",
+              "heavy",
+              null
+            ],
+            "description": "Auto mode's tier for this turn; null in manual mode."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "auto"
+            ]
+          },
+          "fallback": {
+            "type": "boolean",
+            "description": "True once Hermes moved this turn to a fallback model."
+          },
+          "short": {
+            "type": "string",
+            "description": "Fits on the picture: \"Opus\", \"GPT-5.5\", \"5.4 mini\"."
+          },
+          "name": {
+            "type": "string",
+            "description": "\"Claude Opus 5.5\"."
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "effort",
+          "tier",
+          "mode",
+          "fallback",
+          "short",
+          "name"
+        ]
+      },
+      "LiveState": {
+        "type": "object",
+        "properties": {
+          "botId": {
+            "type": "string"
+          },
+          "isRunning": {
+            "type": "boolean"
+          },
+          "activity": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "$ref": "#/components/schemas/ActivityKind"
+                  },
+                  "detail": {
+                    "type": "string"
+                  },
+                  "since": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "since"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "awaiting": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  },
+                  "since": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "reason",
+                  "since"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "startedAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "caption": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Short one-line recap of the model's live reasoning, shown next to \"Thinking\" (caption.ts). Never cut mid-sentence."
+          },
+          "captionFull": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The whole thought behind `caption`, shown when the person expands the bubble. Null when it says no more."
+          },
+          "steps": {
+            "type": "number",
+            "description": "Tool calls made so far in the current turn."
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "queued",
+                    "working",
+                    "waiting"
+                  ]
+                },
+                "since": {
+                  "type": "number"
+                },
+                "model": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/LiveModel"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "state",
+                "since"
+              ]
+            },
+            "description": "Group chats only (agent/room-runs.ts): the members answering the group's messages right now. queued: waiting behind other work; working: on it; waiting: one of its approval cards needs you."
+          },
+          "model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LiveModel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The model answering the current turn and its reasoning effort (model-badge.ts), shown as a small badge on the bot's picture while it works. It follows the model actually used: when Hermes falls back to another model mid-turn this changes and `fallback` is set. Null when idle."
+          }
+        },
+        "required": [
+          "botId",
+          "isRunning",
+          "activity",
+          "awaiting",
+          "startedAt"
+        ]
+      },
+      "MessageBody": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "message"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "streaming": {
+            "type": "boolean"
+          },
+          "from": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "bot",
+                  "routine",
+                  "voice",
+                  "agent"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "via": {
+                "type": "string",
+                "const": "slack"
+              },
+              "link": {
+                "type": "string"
+              },
+              "to": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ],
+                "description": "Who an outside member's message went to (shown \"Sheldon to Leonard\" in Sheldon's own chat)."
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "name"
+            ],
+            "description": "Set when a message came from another bot, a routine, a voice call, or a program signed in to the account ('agent': a Claude thread, a test script) rather than the user typing."
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "url"
+              ]
+            }
+          },
+          "reactions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Reaction"
+            },
+            "description": "Emoji reactions (reactions.ts). A reaction is feedback only, never an approval of anything."
+          },
+          "editedTo": {
+            "type": "number",
+            "description": "On a message you edited (message-edit.ts): the seq of its new version, shown \"Edited\"."
+          },
+          "editOf": {
+            "type": "number",
+            "description": "On the new version of a message you edited: the seq of the earlier one."
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatFile"
+            },
+            "description": "Pictures and files sent with the message (chat-extras.ts): saved in the bot's Library under uploads/."
+          },
+          "steer": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "read",
+              "next"
+            ],
+            "description": "A message sent while the bot was working, taken into the reply in progress (steer-mode.ts): 'pending' until the bot reaches a safe point, 'read' once handed to it, 'next' when the reply ended first and the message became the next turn. Shown as a small \"Steering\" marker."
+          },
+          "handoff": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "ask",
+                  "answer"
+                ]
+              },
+              "askedBy": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "ask",
+                  "mention"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "role"
+            ],
+            "description": "A handoff between bots (bot-handoffs.ts). 'ask': the task as the answering bot's chat shows it. 'answer': the answering bot's reply, written word for word into the asking chat under its name (`from`). Shown \"Answer to <askedBy>'s handoff\" (kind 'mention': \"Answer to your"
+          }
+        },
+        "required": [
+          "type",
+          "role",
+          "text"
+        ]
+      },
+      "ModelTierChoice": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "effort": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ]
+          }
+        },
+        "required": [
+          "model",
+          "effort"
+        ]
+      },
+      "NeedsItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable for as long as the item waits: `<chatId>:<seq>` for a card, `task:<id>` for a task."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NeedsKind"
+          },
+          "label": {
+            "type": "string",
+            "description": "A short word for the kind, shown as the row's tag (\"Approval\", \"Question\", \"Stalled\")."
+          },
+          "title": {
+            "type": "string",
+            "description": "What is waiting, in a line."
+          },
+          "detail": {
+            "type": "string",
+            "description": "A second line when there is one (the email's subject, the task's last note)."
+          },
+          "botId": {
+            "type": "string",
+            "description": "The bot (or group) whose list row this belongs to, and the chat the card is in (a side chat's own id)."
+          },
+          "chatId": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "number",
+            "description": "The card's row in the open conversation; absent for a task."
+          },
+          "taskId": {
+            "type": "string",
+            "description": "A task's id, for a task or stalled row (they open the bot's tasks)."
+          },
+          "sideTitle": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The side chat's title, when the card is in one."
+          },
+          "at": {
+            "type": "number",
+            "description": "Since when it has waited."
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "label",
+          "title",
+          "detail",
+          "botId",
+          "chatId",
+          "sideTitle",
+          "at"
+        ]
+      },
+      "NeedsKind": {
+        "type": "string",
+        "enum": [
+          "approval",
+          "email",
+          "secret",
+          "purchase",
+          "screen",
+          "plan",
+          "question",
+          "choice",
+          "form",
+          "connect",
+          "plugin",
+          "look",
+          "skill",
+          "draft",
+          "task",
+          "stalled",
+          "handoff"
+        ]
+      },
+      "Notice": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "messages",
+              "approvals",
+              "jobs"
+            ]
+          },
+          "tag": {
+            "type": "string",
+            "description": "One per thing: a new notice with the same tag replaces the old one on every app."
+          },
+          "botId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "description": "The chat a tap opens: the bot, or the group a message was posted in."
+          },
+          "body": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "number",
+            "description": "Row to scroll to when the chat opens."
+          },
+          "silent": {
+            "type": "boolean",
+            "description": "Shown with no sound or vibration (quiet hours)."
+          },
+          "catchUp": {
+            "type": "boolean",
+            "description": "Missed while the app was away; shown quietly."
+          },
+          "approval": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "digest": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "digest"
+            ],
+            "description": "Only on a low-risk approval card (lowRisk true): Allow and Deny right in the notification."
+          },
+          "choices": {
+            "type": "object",
+            "properties": {
+              "seq": {
+                "type": "number"
+              },
+              "generation": {
+                "type": "number"
+              },
+              "block": {
+                "type": "string"
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "seq",
+              "generation",
+              "block",
+              "options"
+            ],
+            "description": "Choice buttons (choices.ts): up to three answers as notification buttons. A tap sends the same pick the chat's buttons send (POST /bots/:chat/cards/:seq/view): a chat reply, never an approval."
+          },
+          "group": {
+            "type": "boolean"
+          },
+          "chatId": {
+            "type": "string",
+            "description": "Set when it is about one of the bot's side chats: a tap opens that side chat (an older app opens the main chat)."
+          },
+          "chatTitle": {
+            "type": "string"
+          },
+          "sender": {
+            "$ref": "#/components/schemas/NoticeFace",
+            "description": "Who it is from: the bot that wrote the message (in a group, the member who posted), so apps can show that bot's face. `face` is its face-centred picture (changes address when the picture changes), or null for a bot with no picture, which apps draw as its initial on `color`."
+          },
+          "room": {
+            "$ref": "#/components/schemas/NoticeFace",
+            "description": "A group message: the group itself (its name and picture), for the conversation's own picture."
+          },
+          "createdAt": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "channel",
+          "tag",
+          "botId",
+          "title",
+          "body",
+          "createdAt"
+        ],
+        "description": "One notification (notify.ts). Same shape on every app: Android, web and Windows."
+      },
+      "NoticeBody": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "notice"
+          },
+          "text": {
+            "type": "string"
+          },
+          "tone": {
+            "type": "string",
+            "enum": [
+              "info",
+              "warn",
+              "error"
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ]
+      },
+      "NoticeFace": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "face": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "color": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "face",
+          "color"
+        ]
+      },
+      "Page": {
+        "type": "object",
+        "properties": {
+          "cleftPage": {
+            "type": "number",
+            "const": 1
+          },
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          },
+          "blocks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PageBlock"
+            }
+          },
+          "updatedAt": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "cleftPage",
+          "id",
+          "title",
+          "version",
+          "blocks",
+          "updatedAt"
+        ]
+      },
+      "PageAnswer": {
+        "type": "object",
+        "properties": {
+          "cleftPage": {
+            "type": "number",
+            "const": 1
+          },
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          },
+          "blocks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PageBlock"
+            }
+          },
+          "updatedAt": {
+            "type": "number"
+          },
+          "sendTo": {
+            "type": "string"
+          },
+          "sendToTitle": {
+            "type": "string"
+          },
+          "pinned": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "blocks",
+          "cleftPage",
+          "id",
+          "pinned",
+          "sendTo",
+          "sendToTitle",
+          "title",
+          "updatedAt",
+          "version"
+        ],
+        "description": "GET /api/bots/:id/pages?path= : the Page, the chat its buttons send into (page-shelf.ts shelfInfo) and whether it is pinned."
+      },
+      "PageBlock": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "heading",
+              "checklist",
+              "table",
+              "form",
+              "choice",
+              "chart",
+              "callout",
+              "button",
+              "file",
+              "code",
+              "toggle",
+              "divider",
+              "calc"
+            ]
+          },
+          "rev": {
+            "type": "number",
+            "description": "The page version of this block's last change, and who made it."
+          },
+          "by": {
+            "type": "string"
+          },
+          "byKind": {
+            "type": "string",
+            "enum": [
+              "person",
+              "bot"
+            ]
+          },
+          "at": {
+            "type": "number"
+          },
+          "alt": {
+            "type": "object",
+            "properties": {
+              "by": {
+                "type": "string"
+              },
+              "byKind": {
+                "type": "string",
+                "enum": [
+                  "person",
+                  "bot"
+                ]
+              },
+              "at": {
+                "type": "number"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "by",
+              "byKind",
+              "at",
+              "fields"
+            ],
+            "description": "A person's edit that arrived after someone else changed the block, waiting to be picked."
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "rev",
+          "by",
+          "byKind",
+          "at"
+        ],
+        "additionalProperties": {},
+        "description": "One block of a Page. Its content fields depend on `type` (see pages.ts `content`)."
+      },
+      "PageOp": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "PageOpResult": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "item": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "conflict": {
+            "type": "boolean"
+          },
+          "current": {}
+        },
+        "required": [
+          "ok"
+        ]
+      },
+      "PlanDayOnCard": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "video": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "type": "number"
+                  },
+                  "ok": {
+                    "type": "boolean"
+                  },
+                  "sha": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path",
+                  "name",
+                  "size",
+                  "ok"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cover": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "type": "number"
+                  },
+                  "ok": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "path",
+                  "name",
+                  "size",
+                  "ok"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "posts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "platform": {
+                  "type": "string"
+                },
+                "time": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "post",
+                    "reply",
+                    "comment"
+                  ]
+                },
+                "caption": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "platform",
+                "time",
+                "kind",
+                "caption"
+              ]
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "date",
+          "label",
+          "video",
+          "cover",
+          "posts",
+          "warnings"
+        ],
+        "description": "One day on a posting plan card (posting.ts). Files are the bot's own, read by the server."
+      },
+      "PluginBlock": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "heading"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "text"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "fields"
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "label": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "label",
+                    "value"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "kind",
+              "items"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "table"
+              },
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "required": [
+              "kind",
+              "columns",
+              "rows"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "link"
+              },
+              "label": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label",
+              "url"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "image"
+              },
+              "url": {
+                "type": "string"
+              },
+              "alt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "url",
+              "alt"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "progress"
+              },
+              "label": {
+                "type": "string"
+              },
+              "value": {
+                "type": "number"
+              },
+              "max": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "kind",
+              "label",
+              "value",
+              "max"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "badge"
+              },
+              "text": {
+                "type": "string"
+              },
+              "tone": {
+                "type": "string",
+                "enum": [
+                  "neutral",
+                  "good",
+                  "warn",
+                  "bad"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "text",
+              "tone"
+            ]
+          }
+        ],
+        "description": "What a plugin may show in the apps, as data. Shared by the server (which validates it) and every app (web imports it as"
+      },
+      "PluginCard": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "subtitle": {
+            "type": "string"
+          },
+          "blocks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginBlock"
+            }
+          }
+        },
+        "required": [
+          "title",
+          "blocks"
+        ]
+      },
+      "PostingPlanOnCard": {
+        "type": "object",
+        "properties": {
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanDayOnCard"
+            }
+          },
+          "why": {
+            "type": "string"
+          },
+          "expires": {
+            "type": "number",
+            "description": "End of the last day, epoch ms, in `tz`."
+          },
+          "tz": {
+            "type": "string"
+          },
+          "result": {
+            "type": "object",
+            "properties": {
+              "days": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "at": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "days",
+              "at"
+            ]
+          }
+        },
+        "required": [
+          "days",
+          "why",
+          "expires",
+          "tz"
+        ],
+        "description": "A posting plan card: days with posts; `result` once answered (the days approved)."
+      },
+      "PurchaseOnCard": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "object",
+            "properties": {
+              "origin": {
+                "type": "string"
+              },
+              "site": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "total": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "amount": {
+                        "type": "string"
+                      },
+                      "currency": {
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "amount",
+                      "currency",
+                      "text"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "card": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "brand": {
+                        "type": "string"
+                      },
+                      "last4": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "brand",
+                      "last4"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "shipping": {
+                "type": "string"
+              },
+              "shipTo": {
+                "type": "string"
+              },
+              "recurring": {
+                "type": "string"
+              },
+              "controls": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "processors": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "origin",
+              "site",
+              "title",
+              "url",
+              "total",
+              "card",
+              "items",
+              "shipping",
+              "shipTo",
+              "recurring",
+              "controls",
+              "processors"
+            ]
+          },
+          "botSays": {
+            "type": "object",
+            "properties": {
+              "amount": {
+                "type": "string"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "merchant": {
+                "type": "string"
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "paymentMethod": {
+                "type": "string"
+              },
+              "recurring": {
+                "type": "boolean"
+              },
+              "why": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "amount",
+              "currency",
+              "merchant",
+              "items",
+              "paymentMethod",
+              "recurring",
+              "why"
+            ],
+            "description": "What the bot said it is buying (its words)."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Plain warnings: totals differ, nothing read, recurring charge."
+          },
+          "result": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "at": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "ok",
+              "detail",
+              "at"
+            ],
+            "description": "After Approve: armed (the bot may place the order within 3 minutes), or why not."
+          }
+        },
+        "required": [
+          "page",
+          "botSays",
+          "warnings"
+        ],
+        "description": "A checkout as the purchase card shows it (browser-cards.ts). Everything under `page` was read from the page."
+      },
+      "Reaction": {
+        "type": "object",
+        "properties": {
+          "emoji": {
+            "type": "string"
+          },
+          "by": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "person",
+                  "bot"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "name"
+            ]
+          },
+          "at": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "emoji",
+          "by",
+          "at"
+        ],
+        "description": "Who reacted: a person on the account, or a Bot (by id)."
+      },
+      "RemovedTask": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "working",
+              "needs_input",
+              "done"
+            ]
+          },
+          "note": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "state",
+          "note",
+          "createdAt",
+          "updatedAt"
+        ],
+        "description": "A task the person deleted, whole, so the app's Undo can put it back exactly (POST /bots/<id>/tasks/restore)."
+      },
+      "Routine": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "botId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "schedule": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "nextRunAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "lastRunAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "quiet": {
+            "type": "boolean",
+            "description": "Post only when something is found: a run with nothing to report leaves no message in the chat."
+          },
+          "failCount": {
+            "type": "number",
+            "description": "Failed runs in a row, and the last one's error (routines.ts, the fatigue rule)."
+          },
+          "lastError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "autoOffAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Set when it switched itself off after 10 failures in a row; cleared when it is turned back on."
+          }
+        },
+        "required": [
+          "id",
+          "botId",
+          "name",
+          "prompt",
+          "schedule",
+          "timezone",
+          "enabled",
+          "nextRunAt",
+          "lastRunAt",
+          "description",
+          "quiet"
+        ]
+      },
+      "Row": {
+        "type": "object",
+        "properties": {
+          "botId": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "number"
+          },
+          "seq": {
+            "type": "number"
+          },
+          "updatedSeq": {
+            "type": "number"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RowKind"
+          },
+          "body": {
+            "$ref": "#/components/schemas/RowBody"
+          },
+          "createdAt": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "botId",
+          "generation",
+          "seq",
+          "updatedSeq",
+          "kind",
+          "body",
+          "createdAt"
+        ],
+        "description": "A transcript row. `seq` orders rows; `updatedSeq` is a per-bot revision counter (rows are rewritten while streaming)."
+      },
+      "RowBody": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/MessageBody"
+          },
+          {
+            "$ref": "#/components/schemas/ToolCallBody"
+          },
+          {
+            "$ref": "#/components/schemas/CardBody"
+          },
+          {
+            "$ref": "#/components/schemas/EventBody"
+          },
+          {
+            "$ref": "#/components/schemas/NoticeBody"
+          }
+        ]
+      },
+      "RowKind": {
+        "type": "string",
+        "enum": [
+          "message",
+          "tool-call",
+          "card",
+          "event",
+          "notice"
+        ]
+      },
+      "SecretOnCard": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "password",
+              "username",
+              "email",
+              "one_time_code",
+              "card_number",
+              "card_expiry",
+              "card_cvc",
+              "other",
+              "service_key"
+            ]
+          },
+          "kindLabel": {
+            "type": "string",
+            "description": "\"Password\", \"One-time code\"..."
+          },
+          "origin": {
+            "type": "string",
+            "description": "The page's own origin (https://accounts.example.com) and its host for big type."
+          },
+          "site": {
+            "type": "string"
+          },
+          "frameOrigin": {
+            "type": "string",
+            "description": "Set when the field is inside a frame from another origin (a card iframe)."
+          },
+          "fieldLabel": {
+            "type": "string",
+            "description": "The field's label as the page shows it."
+          },
+          "why": {
+            "type": "string",
+            "description": "What the bot said it is for (its words; shown as such)."
+          },
+          "masked": {
+            "type": "boolean",
+            "description": "Shown masked; one-time codes and usernames may be shown as typed."
+          },
+          "numeric": {
+            "type": "boolean",
+            "description": "Digits only (codes, card numbers): the apps show a number pad."
+          },
+          "canSave": {
+            "type": "boolean",
+            "description": "The card offers \"Save to my logins\" (vault.ts): a sign-in field on a page saved logins can fill."
+          },
+          "result": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "at": {
+                "type": "number"
+              },
+              "saved": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok",
+              "detail",
+              "at"
+            ],
+            "description": "After Fill: filled, or why not. Never the value. `saved` when it was also saved to the person's logins."
+          }
+        },
+        "required": [
+          "kind",
+          "kindLabel",
+          "origin",
+          "site",
+          "fieldLabel",
+          "why",
+          "masked",
+          "numeric"
+        ],
+        "description": "The field a secure input card is for (browser-cards.ts)."
+      },
+      "ServerEvent": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "hello"
+              },
+              "serverTime": {
+                "type": "number"
+              },
+              "resumed": {
+                "type": "boolean"
+              },
+              "commit": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "web": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "serverTime"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "restarting"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "rows"
+              },
+              "botId": {
+                "type": "string"
+              },
+              "generation": {
+                "type": "number"
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Row"
+                }
+              }
+            },
+            "required": [
+              "type",
+              "botId",
+              "generation",
+              "rows"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "cleared"
+              },
+              "botId": {
+                "type": "string"
+              },
+              "generation": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "type",
+              "botId",
+              "generation"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "restored"
+              },
+              "botId": {
+                "type": "string"
+              },
+              "generation": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "type",
+              "botId",
+              "generation"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "live"
+              },
+              "state": {
+                "$ref": "#/components/schemas/LiveState"
+              }
+            },
+            "required": [
+              "type",
+              "state"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "roster"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "bot"
+              },
+              "bot": {
+                "$ref": "#/components/schemas/Bot"
+              }
+            },
+            "required": [
+              "type",
+              "bot"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "side-chats"
+              },
+              "botId": {
+                "type": "string"
+              },
+              "chats": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SideChat"
+                }
+              }
+            },
+            "required": [
+              "type",
+              "botId",
+              "chats"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "computer"
+              },
+              "state": {
+                "$ref": "#/components/schemas/ComputerState"
+              }
+            },
+            "required": [
+              "type",
+              "state"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "routines"
+              },
+              "botId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "botId"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "tasks"
+              },
+              "botId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "botId"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "memories"
+              },
+              "botId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "botId"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "connections"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "machines"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "look-run"
+              },
+              "botId": {
+                "type": "string"
+              },
+              "run": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "done",
+                  "failed"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "botId",
+              "run",
+              "state"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "page"
+              },
+              "botId": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "version": {
+                "type": "number"
+              },
+              "by": {
+                "type": "string"
+              },
+              "byKind": {
+                "type": "string",
+                "enum": [
+                  "person",
+                  "bot"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "botId",
+              "path",
+              "version",
+              "by",
+              "byKind"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "pages"
+              },
+              "botId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "botId"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "notify"
+              },
+              "n": {
+                "$ref": "#/components/schemas/Notice"
+              }
+            },
+            "required": [
+              "type",
+              "n"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "notify-clear"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "type",
+              "tags"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "ping"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        ],
+        "description": "Server-sent events on GET /api/events"
+      },
+      "SideChat": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "botId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "lastActivityAt": {
+            "type": "number"
+          },
+          "lastPreview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unread": {
+            "type": "number"
+          },
+          "generation": {
+            "type": "number"
+          },
+          "live": {
+            "$ref": "#/components/schemas/LiveState"
+          }
+        },
+        "required": [
+          "id",
+          "botId",
+          "title",
+          "createdAt",
+          "lastActivityAt",
+          "lastPreview",
+          "unread",
+          "generation",
+          "live"
+        ],
+        "description": "One of a bot's side chats (side-chats.ts): a conversation of its own with the same bot, beside its main chat. Its rows, live state and cards are read and sent with `id` like any chat (/bots/<id>/rows, /bots/<id>/messages, /bots/<id>/interrupt...); the bot it belongs to is `botId`."
+      },
+      "Task": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "botId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "working",
+              "needs_input",
+              "done"
+            ]
+          },
+          "note": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "number"
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "Marked \"working\" but untouched for hours while its bot is idle (store.ts taskStale)."
+          }
+        },
+        "required": [
+          "id",
+          "botId",
+          "title",
+          "state",
+          "note",
+          "updatedAt"
+        ]
+      },
+      "ToolCallBody": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "tool-call"
+          },
+          "callId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string",
+            "description": "Human phrase, e.g. \"Clicking on screen\"."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "done",
+              "error",
+              "awaiting-approval",
+              "denied"
+            ]
+          },
+          "args": {},
+          "summary": {
+            "type": "string"
+          },
+          "screenshot": {
+            "type": "string",
+            "description": "Data URL thumbnail for computer actions."
+          }
+        },
+        "required": [
+          "type",
+          "callId",
+          "name",
+          "label",
+          "status"
+        ]
+      },
+      "VaultOnCard": {
+        "type": "object",
+        "properties": {
+          "origin": {
+            "type": "string",
+            "description": "The page's own origin and host, read from the browser."
+          },
+          "site": {
+            "type": "string"
+          },
+          "frameOrigin": {
+            "type": "string",
+            "description": "Set when the fields are inside a frame from another origin."
+          },
+          "login": {
+            "type": "string",
+            "description": "The saved login: its id, the site it was saved for, its label and a username hint (\"a•••@example.com\")."
+          },
+          "savedSite": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "userHint": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "username",
+                "password"
+              ]
+            },
+            "description": "What will be typed, and the page's own labels for those fields."
+          },
+          "fieldLabels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "owner": {
+            "type": "string",
+            "description": "Whose login it is (first name), and whether that is a scoped sign-in (only that sign-in can press Sign in)."
+          },
+          "forScoped": {
+            "type": "boolean"
+          },
+          "connectorFirst": {
+            "type": "boolean",
+            "description": "A mail, calendar or money site: the bots use connected apps there first."
+          },
+          "why": {
+            "type": "string",
+            "description": "What the bot said it is for (its words)."
+          },
+          "result": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "at": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "ok",
+              "detail",
+              "at"
+            ],
+            "description": "After Sign in: which fields were filled, or why not."
+          }
+        },
+        "required": [
+          "origin",
+          "site",
+          "login",
+          "savedSite",
+          "label",
+          "userHint",
+          "fields",
+          "fieldLabels",
+          "owner",
+          "forScoped",
+          "connectorFirst",
+          "why"
+        ],
+        "description": "A saved-login card (vault.ts, browser-cards.ts useSavedLogin). Never carries a username or password."
+      },
+      "ViewBlock": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "sentAt": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "type"
+        ],
+        "additionalProperties": {},
+        "description": "One piece of an answer view. Its fields depend on `type` (views.ts VIEW_TYPES). `sentAt` marks a sent choice, form or button."
+      },
+      "VisualsLevel": {
+        "type": "string",
+        "enum": [
+          "minimal",
+          "balanced",
+          "rich"
+        ],
+        "description": "How often a bot reaches for answer views, calculators, tap choices and Pages, set per bot in its settings (\"Visuals in replies\"). It only changes the guidance in the bot's prompt (agent/prompt.ts and the group brief in agent/rooms.ts); the tools stay available at every level.\n\nThis is separate from the app's own \"Answer visuals: Rich / Simple\" switch, which only changes how a device draws views that arrive (Simple shows them as text). That one is per device; this one is per bot.\n\nThe text must not depend on the clock: it sits in the cached part of the prompt."
+      },
+      "VoiceCallRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "started",
+              "ended"
+            ]
+          },
+          "durationMs": {
+            "type": "number"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "transcript": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "assistant"
+                  ]
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "role",
+                "text"
+              ]
+            }
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "phase"
+        ]
+      }
+    }
+  }
+}

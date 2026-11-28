@@ -13,6 +13,7 @@ import { restartPrimaryIfPending } from './primary-providers.js';
 import { withToolsOff } from './list-summary.js';
 import { isAnyChatBusy } from './agent/loop.js';
 import { refreshBlocker } from './mcp.js';
+import { chatsOf } from './side-chats.js';
 import { answeredBy, catalogEntry, SUBSCRIPTION } from './provider-catalog.js';
 import type { ProviderCheckResult } from './types.js';
 
@@ -118,7 +119,7 @@ export function primaryRefreshBlocker(): string | null {
   const id = primaryBotId();
   if (!id) return 'no primary bot';
   if (isAnyChatBusy(id)) return 'a turn is running';
-  const waiting = db.prepare("SELECT count(*) n FROM approvals WHERE bot_id=? AND status='pending'").get(id) as { n: number };
+  const waiting = db.prepare("SELECT count(*) n FROM approvals WHERE bot_id IN (SELECT value FROM json_each(?)) AND status='pending'").get(JSON.stringify(chatsOf(id))) as { n: number };
   if (waiting.n) return 'an approval card is waiting';
   return null;
 }

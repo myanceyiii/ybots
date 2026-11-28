@@ -169,6 +169,8 @@ function createInjector({ platform = process.platform, screenSize, onError } = {
       child.on('error', (e) => { onError?.(e); child = null; });
       child.on('exit', () => { child = null; });
       child.stdin.on('error', () => { /* exit follows */ });
+      // Read, or PowerShell stops once its error pipe fills (about 4 KB of errors) and input stalls.
+      child.stderr.on('data', () => { /* dropped */ });
     };
     return {
       apply(actions) {
@@ -176,7 +178,12 @@ function createInjector({ platform = process.platform, screenSize, onError } = {
         const lines = actions.map(windowsLine).filter(Boolean);
         if (lines.length && child?.stdin.writable) child.stdin.write(lines.join('\n') + '\n');
       },
-      close() { try { child?.stdin.end(); } catch { /* */ } setTimeout(() => { try { child?.kill(); } catch { /* */ } }, 1000); child = null; },
+      close() {
+        const c = child;
+        child = null;
+        try { c?.stdin.end(); } catch { /* */ }
+        if (c) setTimeout(() => { try { if (c.exitCode === null) c.kill(); } catch { /* */ } }, 1000);
+      },
     };
   }
   // xdotool: one command per batch, in order.

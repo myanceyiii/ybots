@@ -1,6 +1,6 @@
 import { leaveTalk, startTalk, talkLink, type TalkLink } from './lib/talk';
 import { QuickAsk } from './components/QuickAsk';
-import { UpdateNotice } from './components/UpdateNotice';
+import { OldAppNotice, UpdateNotice } from './components/UpdateNotice';
 import { useEffect, useState } from 'react';
 import { isSimpleNow } from './lib/simple';
 import { startEvents } from './lib/events';
@@ -29,6 +29,7 @@ import { restoreDrafts } from './lib/drafts';
 import { chatIdFor } from './store';
 import { api } from './lib/api';
 import { ComputerViewer } from './components/ComputerViewer';
+import { TeachReview } from './components/TeachReview';
 import { FilePane } from './components/files/FilePane';
 import { TasksView } from './components/config/TasksView';
 import { lazily } from './lib/lazy';
@@ -66,7 +67,7 @@ function Shell() {
       const m = /^#settings(?:\/([a-z]+))?$/.exec(window.location.hash);
       if (!m) return;
       // A sign-in that sees only some Bots has only these three pages (AppSettings.tsx).
-      const known = useStore.getState().user?.scope ? ['general', 'notifications', 'account'] : ['general', 'notifications', 'computer', 'pcs', 'permissions', 'connections', 'usage', 'system', 'account'];
+      const known = useStore.getState().user?.scope ? ['general', 'notifications', 'account'] : ['general', 'notifications', 'computer', 'pcs', 'permissions', 'connections', 'activity', 'usage', 'system', 'account'];
       useConfigUI.getState().openAppSettings((known.includes(m[1] ?? '') ? m[1] : 'general') as Parameters<ReturnType<typeof useConfigUI.getState>['openAppSettings']>[0]);
       history.replaceState(null, '', window.location.pathname + window.location.search);
     };
@@ -172,6 +173,7 @@ function Shell() {
     <div style={sideW ? ({ '--side-w': `${sideW}px` } as CSSProperties) : undefined} className={`app is-${layout}${compact ? ` pane-${pane}` : ''}${collapsed && !compact ? ' is-sidebar-collapsed' : ''}${chatFull && !compact ? ' is-chat-full' : ''}${(detailsOpen || filesOpen) && hasBot && view === 'chat' ? ' has-details' : ''}`}>
       <Sidebar />
       <UpdateNotice />
+      <OldAppNotice />
       {compact && pane === 'content' && (
         <button type="button" className="compact-back" onClick={() => useStore.getState().set({ pane: 'list' })} aria-label="Back to bots" title="Back">
           <Icon name="chev_left" opacity={0.8} />
@@ -189,6 +191,7 @@ function Shell() {
       {modal === 'shortcuts' && <ShortcutsModal />}
       <Lightbox />
       {viewerOpen && <ComputerViewer />}
+      <TeachReview />
       <ConfigLayer />
       <FreshUndoToast />
       <SideUndoToast />

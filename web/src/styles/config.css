@@ -104,6 +104,9 @@
 .cfg-item__check input { margin: 0; accent-color: var(--color-text-primary); }
 .cfg-item__actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .cfg-item--routine .toggle { margin-left: 6px; }
+.cfg-item__fail { margin-top: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; line-height: 17px; color: var(--color-danger-text); overflow-wrap: anywhere; }
+.cfg-item__fail span { flex: 1 1 180px; min-width: 0; }
+.cfg-item__fail-btn { height: 28px; padding: 0 12px; font-size: 12px; }
 .cfg-editor { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px; background: var(--color-bg-pane); border: 0.5px solid var(--color-border-secondary); box-shadow: var(--shadow-card); }
 .cfg-editor__actions { display: flex; justify-content: flex-end; gap: 8px; }
 
@@ -153,12 +156,25 @@
 .task-list { display: flex; flex-direction: column; gap: 6px; }
 .task-list--compact { gap: 0; }
 .task-row {
-  display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 10px 12px; text-align: left;
+  position: relative; display: flex; align-items: flex-start; gap: 4px; width: 100%;
   border-radius: 12px; background: var(--color-bg-pane); border: 0.5px solid var(--color-border-tertiary); transition: background-color 120ms;
 }
-.task-row:hover:not(:disabled) { background: var(--color-bg-elevated-hover); }
-.task-list--compact .task-row { border: 0; border-radius: 8px; padding: 8px; background: transparent; }
-.task-list--compact .task-row:hover:not(:disabled) { background: var(--color-bg-hover); }
+.task-row:hover { background: var(--color-bg-elevated-hover); }
+.task-row__open { display: flex; align-items: flex-start; gap: 10px; flex: 1 1 0; min-width: 0; padding: 10px 12px; text-align: left; background: transparent; border: 0; border-radius: inherit; color: inherit; font: inherit; cursor: pointer; }
+.task-row__open:disabled { cursor: default; }
+/* Done / Edit / Delete: shown on hover or keyboard focus, always on touch screens. */
+.task-row__actions { display: flex; align-items: center; gap: 2px; padding: 8px 8px 0 0; flex-shrink: 0; opacity: 0; transition: opacity 120ms; }
+.task-row:hover .task-row__actions, .task-row:focus-within .task-row__actions { opacity: 1; }
+@media (hover: none) { .task-row__actions { opacity: 1; } }
+.task-row__actions .icon-btn { color: var(--color-text-secondary); }
+.task-row--editing { padding: 10px 12px; }
+.task-edit { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.task-edit__note { resize: vertical; min-height: 44px; font: inherit; font-size: 13px; }
+.task-edit__row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.task-edit__spacer { flex: 1 1 auto; }
+.task-list--compact .task-row { border: 0; border-radius: 8px; background: transparent; }
+.task-list--compact .task-row__open { padding: 8px; }
+.task-list--compact .task-row:hover { background: var(--color-bg-hover); }
 .task-list--compact .task-chip { display: none; }
 .task-row__check { display: flex; align-items: center; justify-content: center; width: 18px; height: 18px; margin-top: 1px; flex-shrink: 0; color: var(--color-success); }
 .task-row__ring { width: 15px; height: 15px; border-radius: 50%; border: 1.5px solid var(--color-text-quaternary); }
@@ -172,6 +188,8 @@
 .task-chip { flex-shrink: 0; height: 20px; padding: 0 8px; border-radius: var(--radius-full); font-size: 11px; font-weight: 500; line-height: 20px; white-space: nowrap; background: var(--color-bg-tertiary); color: var(--color-text-secondary); }
 .task-chip.is-needs_input { background: var(--color-warn-bg); color: var(--color-warn-text); }
 .task-chip.is-working { background: var(--color-success-bg); color: var(--color-success-text); }
+.task-chip.is-stale { background: var(--color-bg-tertiary); color: var(--color-text-secondary); }
+.task-row.is-stale .task-row__check.is-working .task-row__ring { animation: none; border-top-color: var(--color-text-quaternary); border-color: var(--color-text-quaternary); }
 
 /* ---------- Tasks view (main column) ---------- */
 .tasks-view { display: flex; flex-direction: column; }
@@ -194,6 +212,29 @@
 .sidebar-island__count { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--radius-full); background: var(--color-warn); color: #FFFFFF; font-size: 11px; font-weight: 600; line-height: 20px; text-align: center; }
 .sidebar.is-collapsed .sidebar-island { justify-content: center; padding: 0; }
 .sidebar.is-collapsed .sidebar-island__label, .sidebar.is-collapsed .sidebar-island__count { display: none; }
+
+/* sidebar Needs you board (NeedsYouBoard.tsx): everything waiting on the person, across every bot */
+.needs-board { margin: 0 0 10px; padding: 4px; border-radius: 14px; background: var(--color-warn-bg); }
+.needs-board__head { display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 8px; border-radius: 10px; color: var(--color-warn-text); font-size: 13px; font-weight: 600; line-height: 18px; }
+.needs-board__head:hover { background: var(--color-bg-hover); }
+.needs-board__title { flex: 0 1 auto; }
+.needs-board__count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: var(--radius-full); background: var(--color-warn); color: #FFFFFF; font-size: 11px; line-height: 18px; text-align: center; }
+.needs-board__head > svg:last-child { margin-left: auto; }
+.needs-board__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.needs-row { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 6px 8px; border-radius: 10px; text-align: left; color: var(--color-text-primary); }
+.needs-row:hover { background: var(--color-bg-hover); }
+.needs-row:focus-visible { outline: 2px solid var(--color-warn); outline-offset: -2px; }
+.needs-row__pic { flex-shrink: 0; border-radius: 50%; }
+.needs-row__text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
+.needs-row__top { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 11px; line-height: 16px; }
+.needs-row__tag { flex-shrink: 0; font-weight: 600; color: var(--color-warn-text); }
+.needs-row.is-stalled .needs-row__tag, .needs-row.is-task .needs-row__tag { color: var(--color-text-secondary); }
+.needs-row__who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary); }
+.needs-row__when { margin-left: auto; flex-shrink: 0; color: var(--color-text-tertiary); }
+.needs-row__title { font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.needs-board__more { display: block; margin: 2px 8px 4px; font-size: 12px; }
+.needs-island { position: relative; }
+.needs-island__dot { position: absolute; top: 2px; right: 6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: var(--radius-full); background: var(--color-warn); color: #FFFFFF; font-size: 10px; font-weight: 600; line-height: 16px; text-align: center; }
 
 /* ---------- App settings page ---------- */
 .app-settings { position: fixed; inset: 0; z-index: 90; display: flex; background: var(--color-bg-chrome); animation: fade 140ms ease-out; }
@@ -421,3 +462,28 @@
   .conn-tool { flex-wrap: wrap; }
   .conn-tool__pick { flex-wrap: wrap; }
 }
+
+/* Settings > Activity (ActivitySection.tsx) */
+.activity-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.activity-filters .text-input { min-width: 0; width: auto; flex: 0 1 auto; height: 32px; padding-top: 0; padding-bottom: 0; line-height: 30px; }
+.activity-filters { flex-direction: row; }
+.activity-search { flex: 1 1 160px; }
+.activity-unwatched { height: 32px; padding: 0 12px; border-radius: var(--radius-full); font-size: 13px; color: var(--color-text-secondary); background: var(--color-bg-tertiary); box-shadow: var(--color-border-tertiary) 0 0 0 0.5px inset; }
+.activity-unwatched:hover { color: var(--color-text-primary); }
+.activity-unwatched.is-active { background: var(--color-warn-bg); color: var(--color-warn-text); box-shadow: none; }
+.activity-looks { display: flex; gap: 6px; align-items: center; margin-top: 10px; font-size: 13px; color: var(--color-text-secondary); }
+.activity-row { align-items: flex-start; }
+.activity-row .cfg-row__title { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.activity-title { overflow-wrap: anywhere; }
+.activity-detail { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; overflow-wrap: anywhere; }
+.activity-time { flex: none; font-size: 12px; color: var(--color-text-tertiary, var(--color-text-secondary)); white-space: nowrap; }
+.activity-badge { flex: none; padding: 1px 7px; border-radius: var(--radius-full); font-size: 11px; line-height: 16px; font-weight: 600; }
+.activity-badge.is-allowed { background: var(--color-success-bg); color: var(--color-success-text); }
+.activity-badge.is-refused { background: var(--color-danger-bg); color: var(--color-danger-text); }
+.activity-badge.is-failed { background: var(--color-warn-bg); color: var(--color-warn-text); }
+.activity-badge.is-unwatched { background: var(--color-bg-tertiary); color: var(--color-text-secondary); box-shadow: var(--color-border-tertiary) 0 0 0 0.5px inset; font-weight: 500; }
+.activity-more { margin-top: 10px; align-self: flex-start; }
+
+/* Skills: Teach by showing (config/SkillsTab.tsx TeachRow) */
+.cfg-teach { display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 12px; border-radius: 12px; background: var(--color-bg-pane); border: 0.5px solid var(--color-border-tertiary); }
+.cfg-teach .cfg-btn { flex-shrink: 0; }

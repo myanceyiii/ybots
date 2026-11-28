@@ -143,6 +143,36 @@ try {
     assert.equal(sent.body.text, 'What about you, @Sheldon and @Robin');
     if (shots) await page.screenshot({ path: path.join(shots, 'web-sent.png') });
   });
+  // A bot's own chat: @ lists the other bots on the team, and the message is passed on to the one named.
+  const leonard = ids[1], robin = ids[2];
+  await test("in a bot's own chat, typing @ lists the other bots (not itself, not groups)", async () => {
+    await page.locator('.bot-list, nav, aside').getByText('Leonard', { exact: true }).first().click();
+    await page.waitForFunction(() => document.querySelector('textarea.composer__input')?.value === '');
+    await box.click();
+    await box.pressSequentially('Ask @');
+    await options.first().waitFor({ timeout: 5000 });
+    const listed = await options.locator('.mention-picker__name').allTextContents();
+    assert.deepEqual(listed.sort(), [a.name, 'Robin', 'Sheldon'].sort());
+    if (shots) await page.screenshot({ path: path.join(shots, 'web-direct-picker.png') });
+  });
+  await test('picking and sending passes the message to that bot, and tells the chat bot', async () => {
+    await box.pressSequentially('rob');
+    await box.press('Enter');
+    assert.equal(await box.inputValue(), 'Ask @Robin ');
+    await box.pressSequentially('about dinner');
+    await box.press('Enter');
+    await page.locator('.bubble.is-user .bubble__mention').first().waitFor({ timeout: 5000 });
+    let got;
+    for (let i = 0; i < 50 && !got; i++) {
+      got = (await api('GET', `/bots/${robin}/rows`)).json.rows.find((r) => r.body.type === 'message' && r.body.from?.id === leonard);
+      if (!got) await sleep(100);
+    }
+    assert.ok(got, 'Robin got no message from Leonard');
+    assert.match(got.body.text, /mentioned you in their chat with Leonard/);
+    assert.match(got.body.text, /Ask @Robin about dinner/);
+    const own = (await api('GET', `/bots/${leonard}/rows`)).json.rows.filter((r) => r.body.role === 'user' && !r.body.from);
+    assert.equal(own.at(-1).body.text, 'Ask @Robin about dinner');
+  });
 } catch (e) {
   failures++;
   console.log(`FAIL setup\n     ${e.stack}\n${log.slice(-1500)}`);

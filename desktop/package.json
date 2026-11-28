@@ -1,7 +1,7 @@
 {
   "name": "cleftbot-desktop",
   "productName": "YBots",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "private": true,
   "description": "YBots for Windows: a thin Electron window around the YBots web app.",
   "main": "src/main.js",

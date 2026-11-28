@@ -1,3 +1,4 @@
+import { setPersonControl } from './browser-guard.js';
 import type { IncomingMessage, Server } from 'node:http';
 import net from 'node:net';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -5,7 +6,7 @@ import { env } from './env.js';
 import { vncTarget } from './local-computer.js';
 import { isSilo, siloVnc } from './silo.js';
 import { db } from './db.js';
-import { isSameOriginRequest, sessionPerson, tokenFromCookieHeader, userFromCookieHeader, userFromToken } from './lib/auth.js';
+import { isSameOriginRequest, sessionAgent, sessionPerson, tokenFromCookieHeader, userFromCookieHeader, userFromToken } from './lib/auth.js';
 import { scopeFor } from './lib/scope.js';
 import { machineViewable, openMachineScreen } from './machines.js';
 import { vncAuthResponse } from './lib/des.js';
@@ -21,11 +22,20 @@ import { viewerClosed, viewerOpened } from './idle.js';
  * (KeyEvent, PointerEvent, ClientCutText) are dropped server-side.
  */
 
+const QUEUE_MAX = 64 * 1024 * 1024;
+/** Longest clipboard text a viewer may send (it is dropped anyway, but its bytes are held until whole). */
+const CUT_MAX = 1024 * 1024;
+
 class ByteQueue {
   private buf = Buffer.alloc(0);
   private waiters: { n: number; resolve: (b: Buffer) => void; reject: (e: Error) => void }[] = [];
   private closed: Error | null = null;
-  push(b: Buffer) { this.buf = Buffer.concat([this.buf, b]); this.drain(); }
+  push(b: Buffer) {
+    if (this.closed) return;
+    // A peer that sends far more than anyone reads is stuck or hostile: stop holding it in memory.
+    if (this.buf.length + b.length > QUEUE_MAX) { this.buf = Buffer.alloc(0); this.close(new Error('Screen sent too much at once')); return; }
+    this.buf = Buffer.concat([this.buf, b]); this.drain();
+  }
   close(e: Error) { this.closed = e; for (const w of this.waiters) w.reject(e); this.waiters = []; }
   read(n: number): Promise<Buffer> {
     return new Promise((resolve, reject) => {
@@ -84,6 +94,12 @@ async function upstreamHandshake(q: ByteQueue, send: (b: Buffer) => void, passwo
  * silence, and the two handshakes overlap. The caller sends ServerInit after.
  */
 async function browserGreeting(q: ByteQueue, send: (b: Buffer) => void) {
+  // A viewer that never answers must not hold the screen open forever.
+  const t = setTimeout(() => q.close(new Error('The viewer did not answer')), 15_000);
+  try { await greet(q, send); } finally { clearTimeout(t); }
+}
+
+async function greet(q: ByteQueue, send: (b: Buffer) => void) {
   send(Buffer.from('RFB 003.008\n'));
   await q.read(12);
   send(Buffer.from([1, 1])); // one security type: None
@@ -152,7 +168,11 @@ function msgLength(b: Buffer): number {
     case 3: return 10; // FramebufferUpdateRequest
     case 4: return 8; // KeyEvent
     case 5: return 6; // PointerEvent
-    case 6: return b.length < 8 ? 0 : 8 + Math.abs(b.readInt32BE(4)); // ClientCutText (+extended)
+    case 6: { // ClientCutText (+extended); an oversized one is refused rather than buffered
+      if (b.length < 8) return 0;
+      const n = Math.abs(b.readInt32BE(4));
+      return n > CUT_MAX ? -1 : 8 + n;
+    }
     case 150: return 10; // EnableContinuousUpdates
     case 248: return b.length < 9 ? 0 : 9 + b[8]; // ClientFence
     case 251: return b.length < 8 ? 0 : 8 + 16 * b[6]; // SetDesktopSize
@@ -160,10 +180,25 @@ function msgLength(b: Buffer): number {
   }
 }
 
+/** Close a screen or dictation socket once its session is signed out (Settings > Devices, sign out others). */
+export function endWhenSignedOut(client: WebSocket, token: string | undefined) {
+  if (!token) return;
+  const t = setInterval(() => { if (!userFromToken(token)) { clearInterval(t); try { client.close(4401, 'signed out'); } catch { /* gone */ } } }, 30_000);
+  t.unref?.();
+  client.once('close', () => clearInterval(t));
+}
+
 export function attachVncRelay(server: Server) {
   const wss = new WebSocketServer({ noServer: true, handleProtocols: (protocols) => (protocols.has('binary') ? 'binary' : false) });
 
   server.on('upgrade', (req: IncomingMessage, socket, head) => {
+    try { upgrade(req, socket, head); } catch (e) {
+      console.warn('[vnc] bad upgrade', String((e as Error)?.message ?? e).slice(0, 200));
+      socket.destroy();
+    }
+  });
+
+  function upgrade(req: IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) {
     const url = new URL(req.url ?? '/', 'http://x');
     const m = url.pathname.match(/^\/api\/bots\/([^/]+)\/screen$/);
     const pc = url.pathname.match(/^\/api\/machines\/([^/]+)\/screen$/);
@@ -188,6 +223,15 @@ export function attachVncRelay(server: Server) {
       socket.destroy();
       return;
     }
+    // A script session (POST /api/auth/owner with an agent name) is never a person: it may watch a bot's
+    // screen, but never take control of one or open a paired PC, where every change otherwise needs a card.
+    const agent = user ? sessionAgent(bearer ?? tokenFromCookieHeader(req.headers.cookie)) : null;
+    if (agent && (pc || url.searchParams.get('mode') === 'control')) {
+      console.warn(`[vnc] refused (script session ${agent}): ${pc ? `pc=${pc[1]}` : `bot=${m?.[1]} control`}`);
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+      socket.destroy();
+      return;
+    }
     if (pc) {
       // A paired PC's screen: only for whoever may see that PC. Watch by default; ?mode=control takes
       // over the mouse and keyboard, which the PC must allow on its own page (docs/remote-pc.md).
@@ -199,7 +243,7 @@ export function attachVncRelay(server: Server) {
         return;
       }
       const pcMode = url.searchParams.get('mode') === 'control' ? 'control' : 'watch';
-      wss.handleUpgrade(req, socket, head, (client) => relayPc(client, user.id, pc[1], pcMode));
+      wss.handleUpgrade(req, socket, head, (client) => { endWhenSignedOut(client, bearer ?? tokenFromCookieHeader(req.headers.cookie)); relayPc(client, user.id, pc[1], pcMode); });
       return;
     }
     if (!m) return;
@@ -213,8 +257,8 @@ export function attachVncRelay(server: Server) {
       return;
     }
     const mode = url.searchParams.get('mode') === 'control' ? 'control' : 'watch';
-    wss.handleUpgrade(req, socket, head, (client) => relay(client, user.id, bot.id, mode));
-  });
+    wss.handleUpgrade(req, socket, head, (client) => { endWhenSignedOut(client, bearer ?? tokenFromCookieHeader(req.headers.cookie)); relay(client, user.id, bot.id, mode); });
+  }
 }
 
 /** The VNC server end of the relay: Orgo's websockify, or a TCP connection to x11vnc here. */
@@ -279,6 +323,11 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
     try { upstream?.close(); } catch { /* */ }
   });
   viewerOpened(userId); // keeps the computer awake while someone is watching (see idle.ts)
+  // A person in control presses Send or Delete themselves: the browser guard never holds their presses.
+  if (mode === 'control') {
+    setPersonControl(botId, true);
+    client.once('close', () => setPersonControl(botId, false));
+  }
 
   const onData = (data: Buffer) => {
     if (!piping) return fromUp.push(data);
@@ -327,7 +376,7 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
         upstream = null;
         const msg = String(e?.message ?? e);
         // Only a screen that stopped answering is worth a second try; a refusal or a closed viewer is not.
-        if (ended || tries || env.computer !== 'local' || isSilo(botId) || /refused|auth failed|Unsupported|no screen/i.test(msg)) throw e;
+        if (ended || tries || env.computer !== 'local' || isSilo(botId) || /refused|auth failed|Unsupported|no screen|viewer did not answer|too much at once/i.test(msg)) throw e;
         console.warn(`[vnc] ${what}: ${msg}; restarting its x11vnc and trying once more`);
         tries++;
         fromUp.reset();

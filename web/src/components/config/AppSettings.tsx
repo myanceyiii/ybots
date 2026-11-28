@@ -18,6 +18,8 @@ import { NotificationsSection } from './NotificationsSection';
 import { FreeRunSection } from './FreeRunSection';
 import { SystemSection } from './SystemSection';
 import { UsageSection } from './UsageSection';
+import { LoginsSection } from './LoginsSection';
+import { ActivitySection } from './ActivitySection';
 import { downloadText } from '../ChatView';
 import type { DeviceSession } from '../../lib/api';
 
@@ -28,12 +30,15 @@ const SECTIONS: { id: AppSection; label: string }[] = [
   { id: 'pcs', label: 'Your PCs' },
   { id: 'permissions', label: 'Permissions' },
   { id: 'connections', label: 'Connections' },
+  { id: 'logins', label: 'Saved logins' },
+  { id: 'activity', label: 'Activity' },
   { id: 'usage', label: 'Usage' },
   { id: 'system', label: 'System' },
   { id: 'account', label: 'Account' },
 ];
 
-const SCOPED_SECTIONS: AppSection[] = ['general', 'notifications', 'account'];
+// Saved logins are each person's own (server/src/vault.ts), so a scoped sign-in has them too.
+const SCOPED_SECTIONS: AppSection[] = ['general', 'notifications', 'logins', 'account'];
 
 /** Full-window settings page, opened from the account menu. */
 export function AppSettings() {
@@ -69,8 +74,10 @@ export function AppSettings() {
           {!scoped && section === 'pcs' && <PcsSection PageHead={PageHead} />}
           {!scoped && section === 'permissions' && <PermissionsSection />}
           {!scoped && section === 'connections' && <ConnectionsSection PageHead={PageHead} />}
+          {!scoped && section === 'activity' && <ActivitySection PageHead={PageHead} />}
           {!scoped && section === 'usage' && <UsageSection PageHead={PageHead} />}
           {!scoped && section === 'system' && <SystemSection PageHead={PageHead} />}
+          {section === 'logins' && <LoginsSection PageHead={PageHead} />}
           {section === 'account' && <AccountSection />}
         </div>
       </div>

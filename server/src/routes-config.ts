@@ -1,3 +1,4 @@
+import { answer } from './lib/contract.js';
 import { Hono } from 'hono';
 import { db, now } from './db.js';
 import './db-config.js';
@@ -12,7 +13,7 @@ import { describe, insideFile, mimeFor, pagePng, previewOf, safeRel, saveText } 
 import { listShelf, notePageOrigin, restoreFromTrash, setPinned, shelfInfo, trashPage } from './page-shelf.js';
 import { applyOps, createPage, EXPORT_FORMATS, exportPage, history, isPagePath, loadPage, restore, undoLast, versionOf, type ExportFormat } from './pages.js';
 import { chatOwner, emitBot, getBotRow, getLive, listRoutines, listTasks } from './store.js';
-import { computerState, readyScreen, resetBotScreen } from './computer.js';
+import { computerState, ensureComputer, readyScreen, resetBotScreen } from './computer.js';
 import { checkPaste, ClipboardError, readBotClipboard, writeBotClipboard } from './clipboard.js';
 import { box } from './box.js';
 import { orgo } from './orgo.js';
@@ -28,7 +29,8 @@ import { cleanHelpers, helperModels, helperRuns, HelpersError, loadHelpers, read
 import { isOwner } from './plugins/owner.js';
 import YAML from 'yaml';
 import { idleConfig, viewerCount } from './idle.js';
-import type { ChatFileEntry, HermesSkillList, LibraryFile, Skill } from './types.js';
+import type { ChatFileEntry, HermesSkillList, LibraryFile, Skill, TeachState } from './types.js';
+import { currentRecording, discardRecording, redraft, saveRecording, startRecording, stopRecording, teachBlocked, teachRecording, TeachError } from './teach.js';
 import { createHermesSkill, deleteHermesSkill, listHermesSkills, markAllSkillsSeen, saveHermesSkill, setHermesSkillEnabled, SkillsError, skillsTarget, viewHermesSkill } from './engine-skills.js';
 
 /**
@@ -499,12 +501,61 @@ configApi.post('/bots/:id/engine/screen/stop', async (c) => {
   }
 });
 
-/** The user gives the screen back after taking control; the bot is told on its next turn. */
-configApi.post('/bots/:id/handback', (c) => {
+/** The user gives the screen back after taking control; the bot is told on its next turn. A recording still running stops and is written up. */
+configApi.post('/bots/:id/handback', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
   db.prepare('UPDATE bots SET handback_at=? WHERE id=?').run(now(), b.id);
+  if (teachRecording(b.id) && !c.get('agent')) await stopRecording(b.id, null).catch(() => undefined);
   return c.json({ ok: true });
+});
+
+// ---------- Teach a bot by showing it (teach.ts, docs/teach-a-bot.md) ----------
+
+const teachFor = (c: any) => {
+  const b = ownBot(c.get('user').id, c.req.param('id'));
+  if (!b || b.kind === 'room') return { error: c.json({ error: 'not found' }, 404) };
+  if (c.req.method !== 'GET' && c.get('agent')) return { error: c.json({ error: 'Only a person can record a lesson for a bot, from the app.', code: 'agent_session' }, 403) };
+  return { bot: b };
+};
+const teachFail = (c: any, e: any) => c.json({ error: String(e?.message ?? e).slice(0, 300) }, e instanceof TeachError ? e.status : 500);
+
+configApi.get('/bots/:id/teach', (c) => {
+  const r = teachFor(c);
+  if (r.error) return r.error;
+  return c.json({ blocked: teachBlocked(r.bot.id), recording: currentRecording(r.bot.id) } satisfies TeachState);
+});
+configApi.post('/bots/:id/teach/start', async (c) => {
+  const r = teachFor(c);
+  if (r.error) return r.error;
+  try { return c.json({ blocked: null, recording: await startRecording(r.bot.id, c.get('user').id) } satisfies TeachState); } catch (e) { return teachFail(c, e); }
+});
+configApi.post('/bots/:id/teach/stop', async (c) => {
+  const r = teachFor(c);
+  if (r.error) return r.error;
+  const p = await c.req.json().catch(() => ({} as any));
+  try { return c.json({ blocked: null, recording: await stopRecording(r.bot.id, typeof p?.note === 'string' ? p.note : null) } satisfies TeachState); } catch (e) { return teachFail(c, e); }
+});
+configApi.post('/bots/:id/teach/:rid/redraft', async (c) => {
+  const r = teachFor(c);
+  if (r.error) return r.error;
+  const p = await c.req.json().catch(() => ({} as any));
+  try { return c.json({ blocked: null, recording: redraft(r.bot.id, c.req.param('rid'), { note: typeof p?.note === 'string' ? p.note : undefined, remove: Array.isArray(p?.remove) ? p.remove : undefined }) } satisfies TeachState); } catch (e) { return teachFail(c, e); }
+});
+configApi.post('/bots/:id/teach/:rid/save', async (c) => {
+  const r = teachFor(c);
+  if (r.error) return r.error;
+  const p = await c.req.json().catch(() => ({} as any));
+  try {
+    const out = await saveRecording(r.bot.id, c.req.param('rid'), p ?? {});
+    console.log(`[teach] ${c.get('user').id} saved ${r.bot.name}'s skill ${out.skillName} from a recording`);
+    return c.json({ ok: true, skillName: out.skillName, recording: out.recording });
+  } catch (e) { return teachFail(c, e); }
+});
+configApi.post('/bots/:id/teach/:rid/discard', async (c) => {
+  const r = teachFor(c);
+  if (r.error) return r.error;
+  try { await discardRecording(r.bot.id, c.req.param('rid')); return c.json({ ok: true }); } catch (e) { return teachFail(c, e); }
 });
 
 // ---------- library: files under <libraryRoot>/<botId> on the bot's computer (see paths.ts) ----------
@@ -540,7 +591,12 @@ configApi.get('/bots/:id/files', async (c) => {
   const rel = safeRel(c.req.query('path'));
   if (rel === null) return c.json({ error: 'bad path' }, 400);
   try {
-    if (!box.local && computerState(user.id).status !== 'running') return c.json({ status: 'asleep', path: rel, files: [] });
+    if (!box.local && computerState(user.id).status !== 'running') {
+      // "Wake and show files" (web, Windows and Android send wake=1): start the computer; the apps list the
+      // files again once it reports running.
+      if (c.req.query('wake') === '1') ensureComputer(user.id).catch((e) => console.warn('[computer] ensure failed', e.message));
+      return c.json({ status: 'asleep', path: rel, files: [] });
+    }
     const root = `${libraryRoot()}/${b.id}`;
     const dir = `${root}${rel ? `/${rel}` : ''}`;
     // Links are followed before listing, on the machine that holds the files, so a link inside the
@@ -688,7 +744,7 @@ configApi.get('/bots/:id/pages', (c) => {
   const r = pageReq(c, c.req.query('path'));
   if (r.error) return r.error;
   // With where its buttons and calculators send (the chat it came from), for the page view.
-  try { const info = shelfInfo(r.b.id, r.rel); return c.json({ ...loadPage(r.b.id, r.rel, r.b.name), sendTo: info.sendTo, sendToTitle: info.chatTitle, pinned: info.pinned }); } catch (e) { return fileErr(c, e); }
+  try { const info = shelfInfo(r.b.id, r.rel); return answer(c, 'GET /api/bots/{id}/pages', { ...loadPage(r.b.id, r.rel, r.b.name), sendTo: info.sendTo, sendToTitle: info.chatTitle, pinned: info.pinned }); } catch (e) { return fileErr(c, e); }
 });
 
 // ---------- the Pages tab (page-shelf.ts): list, pin, delete with Undo ----------
@@ -737,7 +793,7 @@ configApi.post('/bots/:id/pages/ops', async (c) => {
   const body = await c.req.json<{ path: string; ops: any[] }>().catch(() => null);
   const r = pageReq(c, body?.path);
   if (r.error) return r.error;
-  try { const out = applyOps(r.b.id, r.rel, body!.ops, personOf(c), r.b.name); return c.json({ page: out.page, results: out.results }); } catch (e) { return fileErr(c, e); }
+  try { const out = applyOps(r.b.id, r.rel, body!.ops, personOf(c), r.b.name); return answer(c, 'POST /api/bots/{id}/pages/ops', { page: out.page, results: out.results }); } catch (e) { return fileErr(c, e); }
 });
 
 configApi.get('/bots/:id/pages/history', (c) => {

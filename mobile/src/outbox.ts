@@ -108,7 +108,9 @@ export function retryPending(clientId: string) {
 /** Take a message that was never sent out of the chat; it is handed back for the message box. */
 export function discardPending(clientId: string): Pending | undefined {
   const p = items.find((x) => x.clientId === clientId);
-  if (p && p.state !== 'sending') drop(clientId);
+  // One already on its way can't be taken back: giving it to the composer as well would send it twice.
+  if (!p || p.state === 'sending') return undefined;
+  drop(clientId);
   return p;
 }
 

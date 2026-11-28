@@ -51,6 +51,16 @@ CREATE TABLE IF NOT EXISTS allow_rule_log (
 CREATE INDEX IF NOT EXISTS allow_rule_log_bot ON allow_rule_log(bot_id, at);
 `);
 
+// Rules made from a card in a side chat were once stored under the side chat's id, where no lookup reads
+// them (audit 2026-11-27). Move them to the bot they belong to; one already there for that tool wins.
+try {
+  db.transaction(() => {
+    db.exec(`UPDATE OR IGNORE allow_rules SET bot_id=(SELECT side_of FROM bots WHERE bots.id=allow_rules.bot_id)
+      WHERE bot_id IN (SELECT id FROM bots WHERE side_of IS NOT NULL)`);
+    db.exec('DELETE FROM allow_rules WHERE bot_id IN (SELECT id FROM bots WHERE side_of IS NOT NULL)');
+  })();
+} catch (e) { console.warn('[allow-rules] could not move side-chat rules:', (e as Error)?.message ?? e); }
+
 // ---------------------------------------------------------------------------
 // Which tools may have a standing rule
 
@@ -204,7 +214,10 @@ export function noteRuleUse(ruleId: string, botId: string, tool: string, args: u
   let json = '';
   try { json = JSON.stringify(args ?? {}); } catch { json = String(args); }
   const t = now();
-  db.prepare('UPDATE allow_rules SET uses=uses+1, last_used_at=? WHERE id=?').run(t, ruleId);
+  // `conv:<id>` is an "Allow for this conversation" answer (conversation-allows.ts), logged here with the rules.
+  if (ruleId.startsWith('conv:')) {
+    try { db.prepare('UPDATE conversation_allows SET uses=uses+1, last_used_at=? WHERE id=?').run(t, ruleId.slice(5)); } catch { /* table not there yet */ }
+  } else db.prepare('UPDATE allow_rules SET uses=uses+1, last_used_at=? WHERE id=?').run(t, ruleId);
   db.prepare('INSERT INTO allow_rule_log(rule_id,bot_id,tool,args_sha,detail,at) VALUES (?,?,?,?,?,?)')
     .run(ruleId, botId, tool, crypto.createHash('sha256').update(json).digest('hex'), detail ? detail.slice(0, 300) : null, t);
   // Keep the log to the last 2000 entries per bot.
@@ -227,7 +240,7 @@ export function ruleLog(userId: string, botId?: string, limit = 30) {
   // `free:terminal` rows are the maintainer's free-run commands (maintainer-guard.ts), detail = the command, redacted.
   // `app:<id>` rows are changes an app's settings allow without a card (tools.ts policyFor): no rule row, so
   // they are named by the tool's title.
-  return rows.map((r) => ({ id: r.id, ruleId: r.rule_id, botId: r.bot_id, botName: r.bot_name, tool: r.tool, label: r.label ?? (String(r.rule_id).startsWith('app:') && r.detail ? `${r.detail} (allowed in app settings)` : r.rule_id === 'free:terminal' ? `Ran: ${String(r.detail ?? '').slice(0, 160)}` : r.tool), detail: r.detail ?? '', at: r.at }));
+  return rows.map((r) => ({ id: r.id, ruleId: r.rule_id, botId: r.bot_id, botName: r.bot_name, tool: r.tool, label: r.label ?? (String(r.rule_id).startsWith('conv:') ? `${r.detail ?? r.tool} (allowed for this conversation)` : String(r.rule_id).startsWith('app:') && r.detail ? `${r.detail} (allowed in app settings)` : r.rule_id === 'free:terminal' ? `Ran: ${String(r.detail ?? '').slice(0, 160)}` : r.tool), detail: r.detail ?? '', at: r.at }));
 }
 
 /** Remove one of the owner's rules. False when there is no such rule of theirs. */

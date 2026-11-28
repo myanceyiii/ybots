@@ -9,13 +9,25 @@ DIR=${1:?folder to check}; DENY=${2:?deny list file (kept outside the repo)}
 [ -d "$DIR" ] || { echo "no folder $DIR"; exit 2; }
 [ -f "$DENY" ] || { echo "no deny list at $DENY"; exit 2; }
 bad=0
-pat=$(grep -vE '^\s*(#|$)' "$DENY" | paste -sd'|' -)
+# A list of only comments is an empty pattern, not an error.
+pat=$( { grep -vE '^\s*(#|$)' "$DENY" || true; } | paste -sd'|' -)
 if [ -n "$pat" ]; then
-  if grep -rInP --exclude-dir=node_modules --exclude-dir=.git --exclude=package-lock.json "$pat" "$DIR" | cut -c1-200; then
-    echo "FAIL: deny-listed words above"; bad=1
-  fi
+  # Case does not matter (a name may be written in any case). grep exits 1 for no match; 2 or more is a
+  # broken pattern or an unreadable file, which must never read as "clean".
+  hits=$(mktemp); trap 'rm -f "$hits"' EXIT
+  set +e
+  grep -rIinP --exclude-dir=node_modules --exclude-dir=.git --exclude=package-lock.json "$pat" "$DIR" > "$hits"
+  rc=$?
+  set -e
+  if [ $rc -ge 2 ]; then echo "FAIL: the content search failed (exit $rc): check the deny list's patterns"; bad=1
+  elif [ $rc = 0 ]; then cut -c1-200 "$hits"; echo "FAIL: deny-listed words above"; bad=1; fi
   # File and folder names too.
-  if (cd "$DIR" && find . -path ./node_modules -prune -o -print | grep -iP "$pat"); then echo "FAIL: deny-listed file names above"; bad=1; fi
+  set +e
+  names=$(cd "$DIR" && find . -path ./node_modules -prune -o -print | grep -iP "$pat")
+  rc=$?
+  set -e
+  if [ $rc -ge 2 ]; then echo "FAIL: the file name search failed (exit $rc)"; bad=1
+  elif [ $rc = 0 ]; then echo "$names"; echo "FAIL: deny-listed file names above"; bad=1; fi
 fi
 if command -v gitleaks >/dev/null; then
   gitleaks dir "$DIR" --no-banner --redact -l warn || { echo "FAIL: gitleaks found possible secrets"; bad=1; }

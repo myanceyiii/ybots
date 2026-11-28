@@ -129,3 +129,39 @@ Apps: `web/src/components/BoardDock.tsx` (web and Windows) and `mobile/src/compo
 
 Test: `node tests/board-pin.mjs` and `node tests/board-pin-e2e.mjs`. Web dev: `?fixtures=boards` and
 `?fixtures=boardsgroup`. Android preview: `?screen=boards`, `?screen=boardsgroup`.
+
+## A2UI interfaces (`a2ui` blocks, `show_a2ui`)
+
+Bots can also describe an interface in [A2UI 1.0](https://a2ui.org) (Agent-to-User Interface, Apache-2.0): a flat
+list of components from the standard Basic catalog (Text, Image, Icon, Video, AudioPlayer, Row, Column, List,
+Card, Tabs, Modal, Divider, Button, TextField, CheckBox, ChoicePicker, Slider, DateTimeInput), a JSON data model
+with `{"@path": ...}` bindings and templates, the catalog's functions (formatString, formatNumber, formatCurrency,
+formatDate, pluralize, required, regex, length, numeric, email, and, or, not) and `@checks`. It is for layouts the
+blocks above can't do: cards side by side, tabs, forms with validation, lists drawn from data.
+
+- **Bot side:** `show_a2ui` takes the usual A2UI message list (`createSurface`, `updateComponents`,
+  `updateDataModel`); `show_view` takes the same as an `a2ui {messages}` block, and `update_view` applies more
+  messages with `changes: [{id, messages}]`. 0.9 forms (`path`, `call`, `checks`) are read too; 0.8 is refused.
+- **Engine:** `server/src/a2ui.ts`, one file with no imports, used by the server, the web app (`@shared/a2ui`) and
+  Android (`mobile/src/a2ui.ts`, a word-for-word copy). It checks every component against the Basic catalog,
+  resolves bindings and functions, runs checks, and writes the text copy. Icons: `server/src/a2ui-icons.ts`
+  (Lucide paths, `scripts/icons/build-a2ui-icons.mjs`, copied to `mobile/src/a2uiIcons.ts`).
+- **Apps:** `web/src/components/cards/A2uiView.tsx` (web and Windows) and `mobile/src/components/A2uiView.tsx`
+  (Android) draw it with each app's own pieces. On Android a Video opens in the browser (the app has
+  no video player); everything else draws in place.
+- **People's changes:** `op: a2ui-set` (an input's value, saved only at that input's own binding and checked for
+  its kind) and `op: a2ui-action` (a Button press). A press is refused while the button's checks fail. It posts
+  the button's `userMessage` (or its words) as the person's chat message, and the bot also gets the standard
+  A2UI action JSON (`{version, action: {name, surfaceId, sourceComponentId, timestamp, context}}`, plus the data
+  model when the surface asked with `sendDataModel`). In a group the message @mentions the bot that showed it.
+
+Safety: data only. Anything outside the Basic catalog is dropped and reported to the bot; there is no HTML, no
+script and no custom catalog. Regex checks use the A2UI dialect (no backreferences, lookbehind, named groups,
+`\p{}` or flags, 256 characters, no nested repeats). Links and media must be https (pictures may be
+`data:image`), and pictures and media from other sites wait for a tap, as in messages. `openUrl` only opens a
+link after a tap. A press is a chat reply: it carries no approval id or digest, bots can't reach the route, and
+anything privileged the bot does next still meets its approval card.
+
+Tests: `node tests/a2ui.mjs` (engine, every official 1.0 example in `tests/fixtures/a2ui`), `node tests/a2ui-e2e.mjs`
+(server), `node tests/a2ui-web-e2e.mjs` (browser, needs the built web app). Previews: web dev `?fixtures=a2ui`,
+Android `?screen=a2ui`.

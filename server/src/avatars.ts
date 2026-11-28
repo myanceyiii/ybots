@@ -366,6 +366,8 @@ export function lookRoutes(api: Hono<AuthVars>, ownBot: (userId: string, id: str
   api.put('/bots/:id/avatar', async (c) => {
     const b = ownBot(c.get('user').id, c.req.param('id'));
     if (!b) return c.json({ error: 'not found' }, 404);
+    // A side chat shows its bot's picture; one saved on the side chat itself would never be seen.
+    if (b.side_of) return c.json({ error: 'Set the picture on the bot itself.' }, 400);
     const { image, poses } = await c.req.json<{ image: string | null; poses?: boolean }>();
     if (image !== null && !parseImageDataUrl(image)) return c.json({ error: 'image must be a PNG, JPEG or WebP data URL of at most 2 MB, or null' }, 400);
     setPicture(b.id, image, { poses: poses !== false });

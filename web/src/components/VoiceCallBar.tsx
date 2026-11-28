@@ -21,7 +21,8 @@ const fmt = (ms: number) => {
 /** In-call bar shown above the composer while a voice call is connecting, live, or just failed. */
 export function VoiceCallBar() {
   const v = useVoice();
-  const bot = useStore((s) => s.bots.find((b) => b.id === v.botId));
+  // A call started in a side chat names the side chat: the bar shows the bot that side chat belongs to.
+  const bot = useStore((s) => s.bots.find((b) => b.id === v.botId) ?? s.bots.find((b) => (s.sideChats[b.id] ?? []).some((c) => c.id === v.botId)));
   const [now, setNow] = useState(Date.now());
   const [expanded, setExpanded] = useState(false);
   const avatarRef = useRef<HTMLSpanElement>(null);

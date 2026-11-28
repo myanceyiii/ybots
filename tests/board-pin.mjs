@@ -10,11 +10,10 @@ const T = 1_000_000;
 const bar = (value, extra = {}) => ({ id: 'p', type: 'progress', label: 'Work', value, max: 10, ...extra });
 const list = (...done) => ({ id: 'k', type: 'checklist', items: done.map((d, i) => ({ id: `i${i}`, text: `Item ${i}`, done: d })) });
 
-test('the Android copy is the same file under its one-line header', () => {
+test('the Android copy is the same file, word for word (scripts/shared-copies.mjs)', () => {
   const mobile = fs.readFileSync(new URL('../mobile/src/boardPin.ts', import.meta.url), 'utf8');
   const server = fs.readFileSync(new URL('../server/src/board-pin.ts', import.meta.url), 'utf8');
-  assert.match(mobile.split('\n')[0], /^\/\/ Verbatim copy of server\/src\/board-pin\.ts/);
-  assert.equal(mobile.split('\n').slice(1).join('\n'), server);
+  assert.equal(mobile, server);
 });
 test('a live or step-counting bar pins itself when shown; a gauge does not', () => {
   assert.equal(p.nextPin({ blocks: [bar(2, { live: true })] }, { now: T })?.on, true);
@@ -33,6 +32,18 @@ test('the bot and the person can pin or unpin, and a person’s unpin sticks', (
   assert.deepEqual(off, { on: false, by: 'person', at: T + 1 });
   assert.equal(p.nextPin({ blocks: [bar(4, { live: true })], pin: off }, { moved: true, now: T + 2 }).on, false, 'moving it again does not bring it back');
   assert.equal(p.nextPin({ blocks: [bar(4)], pin: off }, { bot: true, now: T + 3 }).on, true, 'the bot can pin it again');
+});
+test('a job pins itself even when the bot passed pin: false; pin: false still lets go of a pinned board', () => {
+  assert.deepEqual(p.nextPin({ blocks: [bar(2, { live: true })] }, { bot: false, now: T }), { on: true, by: 'auto', at: T }, 'shown as a job');
+  assert.equal(p.nextPin({ blocks: [bar(2, { note: 'Step 2 of 10' })] }, { bot: false, now: T }).on, true);
+  assert.equal(p.nextPin({ blocks: [bar(6, { label: '$600 of $1,000 spent' })] }, { bot: false, now: T }).on, false, 'a gauge stays out');
+  assert.equal(p.nextPin({ blocks: [bar(6)] }, { moved: true, bot: false, now: T }).on, false, 'a gauge the bot moves with pin: false stays out');
+  assert.deepEqual(p.nextPin({ blocks: [bar(3, { live: true })], pin: { on: true, by: 'auto', at: T } }, { moved: true, bot: false, now: T + 1 }), { on: true, by: 'auto', at: T }, 'a running job stays pinned');
+  assert.equal(p.nextPin({ blocks: [bar(3)], pin: { on: true, by: 'auto', at: T } }, { moved: true, bot: false, now: T + 1 }).on, false, 'pin: false still lets go of a board that is not a job');
+  const old = { on: false, by: 'bot', at: T };
+  assert.equal(p.nextPin({ blocks: [bar(5, { live: true })], pin: old }, { moved: true, now: T + 3 }).on, true, 'a job shown with pin: false before this change pins when it moves');
+  assert.equal(p.nextPin({ blocks: [bar(5, { live: true })], pin: old }, { now: T + 3 }).on, false, 'a tick or a stop does not');
+  assert.equal(p.nextPin({ blocks: [bar(5)], pin: old }, { moved: true, now: T + 3 }).on, false, 'a gauge kept out stays out');
 });
 test('doneAt is set once every bar is full and every item ticked, and kept', () => {
   const pin = { on: true, by: 'auto', at: T };

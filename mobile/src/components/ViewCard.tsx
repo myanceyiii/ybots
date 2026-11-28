@@ -10,6 +10,7 @@ import { Icon } from './Icon';
 import { Markdown } from './Markdown';
 import { PillButton } from './ui';
 import { useRevealOnFocus } from './KeyboardSafe';
+import { A2uiView } from './A2uiView';
 
 /**
  * An answer view in the chat (server/src/views.ts): tables, charts, stats, checklists, picks, forms and
@@ -59,6 +60,8 @@ export function ViewCard({ api, bot, row, onOpenPage, docked }: { api: Client; b
       return true;
     } catch (e: any) { setError(e?.message ?? 'That didn’t go through'); return false; }
   };
+  // Check-in offer (server/src/checkin-offer.ts): the same buttons with a heading; a tap makes the check-in.
+  if (body.quick && body.checkin && body.blocks?.[0]?.type === 'choice') return <CheckInOffer body={body} change={change} error={error} />;
   if (body.quick && body.blocks?.[0]?.type === 'choice') return <QuickChoices b={body.blocks[0]} group={!!body.from} change={change} error={error} />;
   // Pinned boards (server/src/board-pin.ts): any view can be pinned above the message box, or unpinned.
   const pinned = !!body.pin?.on;
@@ -143,7 +146,7 @@ function Block({ b, all, change }: { b: B; all: B[]; change: (c: Change) => Prom
       </View>
     );
     case 'progress': {
-      const pct = Math.min(100, Math.round((b.value / b.max) * 100));
+      const pct = b.max > 0 && Number.isFinite(b.value) ? Math.max(0, Math.min(100, Math.round((b.value / b.max) * 100))) : 0;
       return (
         <View style={{ gap: 4 }} accessibilityRole="progressbar" accessibilityLabel={b.label} accessibilityValue={{ min: 0, max: b.max, now: b.value }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Text style={[type.body, { fontSize: 14 }]}>{b.label}</Text><Text style={[type.caption, { fontSize: 13 }]}>{`${pct}%`}</Text></View>
@@ -180,6 +183,7 @@ function Block({ b, all, change }: { b: B; all: B[]; change: (c: Change) => Prom
     }
     case 'code': return <ScrollView horizontal style={{ ...box() }} contentContainerStyle={{ padding: 10 }}><Text selectable style={{ fontFamily: 'monospace', fontSize: 12.5, lineHeight: 19, color: color.ink }}>{b.code}</Text></ScrollView>;
     case 'divider': return <View style={{ height: 1, backgroundColor: color.hairline }} />;
+    case 'a2ui': return <A2uiView b={b as any} change={change} />;
     default: return null;
   }
 }
@@ -423,10 +427,42 @@ function CalcSlider({ i, value, shown, onChange }: { i: CalcInput; value: number
 
 /**
  * Choice buttons (server/src/choices.ts): a row of answers under the bot's reply, no card around them.
- * A tap sends that answer as your message; then the row shows what was picked (and who, in a group) and
- * can't be pressed again. "Other" opens a box for your own words. Never an approval: it's a chat reply.
+ * A tap sends that answer as your message, and the chat then hides the row (Transcript / Chat answeredChoice),
+ * so the answer shows once. The picked state below is only a fallback for other places a card is drawn. "Other" opens a box for your own words. Never an approval: it's a chat reply.
  * Same as the web and Windows apps (web/src/components/cards/ViewCard.tsx QuickChoices).
  */
+/**
+ * "Keep an eye on X?" (server/src/checkin-offer.ts): how often, or Not now. A tap only makes a check-in that
+ * reads and posts when something needs you; it posts no message and approves nothing. Same card as the web
+ * and Windows apps (web/src/components/cards/ViewCard.tsx CheckInOffer).
+ */
+function CheckInOffer({ body, change, error }: { body: any; change: (c: Change) => Promise<boolean>; error: string | null }) {
+  const b: B = body.blocks[0];
+  const link = httpsOnly(body.checkin?.link);
+  const who = body.from?.name;
+  return (
+    <View style={{ ...box(), alignSelf: 'stretch', maxWidth: 560, padding: 14, gap: 12 }} accessibilityLabel={b.question}>
+      <View style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start' }}>
+        <View style={{ width: 32, height: 32, borderRadius: 8, borderWidth: 1, borderColor: color.hairline, alignItems: 'center', justifyContent: 'center' }}>
+          <Icon name="eye" size={16} color={color.inkSecondary} />
+        </View>
+        <View style={{ flex: 1, gap: 2 }}>
+          <Text style={[type.body, { fontWeight: '600' }]}>{b.question}</Text>
+          <Text style={[type.caption, { lineHeight: 19 }]}>
+            {who ? `${who} reads` : 'Reads'} it on a schedule and tells you when something there needs you. It only reads, never changes anything.
+          </Text>
+          {!!link && (
+            <Pressable onPress={() => Linking.openURL(link)} accessibilityRole="link" hitSlop={8}>
+              <Text style={[type.caption, { textDecorationLine: 'underline' }]}>Open</Text>
+            </Pressable>
+          )}
+        </View>
+      </View>
+      <QuickChoices b={b} group={!!body.from} change={change} error={error} />
+    </View>
+  );
+}
+
 function QuickChoices({ b, group, change, error }: { b: B; group: boolean; change: (c: Change) => Promise<boolean>; error: string | null }) {
   const sent = !!b.sentAt;
   const [busy, setBusy] = useState<number | 'other' | null>(null);

@@ -205,9 +205,15 @@ function bumpRev(botId: string): number {
 }
 
 /** Append a new row. Returns its seq. */
+/** A chat deleted while something was still writing to it: a plain error rather than a TypeError. */
+function needBot<T>(b: T | undefined | null, botId: string): T {
+  if (!b) throw new Error(`No chat ${botId} (it was deleted)`);
+  return b;
+}
+
 export function appendRow(botId: string, kind: RowKind, body: RowBody): Row {
   const tx = db.transaction(() => {
-    const b = db.prepare('SELECT user_id, generation, next_seq FROM bots WHERE id=?').get(botId) as any;
+    const b = needBot(db.prepare('SELECT user_id, generation, next_seq FROM bots WHERE id=?').get(botId) as any, botId);
     const seq = b.next_seq;
     db.prepare('UPDATE bots SET next_seq = next_seq + 1 WHERE id=?').run(botId);
     const rev = bumpRev(botId);
@@ -224,6 +230,7 @@ export function appendRow(botId: string, kind: RowKind, body: RowBody): Row {
 export function updateRow(botId: string, seq: number, body: RowBody): Row | null {
   const tx = db.transaction(() => {
     const b = db.prepare('SELECT user_id, generation FROM bots WHERE id=?').get(botId) as any;
+    if (!b) return null;
     const existing = db.prepare('SELECT * FROM rows WHERE bot_id=? AND generation=? AND seq=?').get(botId, b.generation, seq) as any;
     if (!existing) return null;
     const rev = bumpRev(botId);
@@ -238,6 +245,7 @@ export function updateRow(botId: string, seq: number, body: RowBody): Row | null
 
 export function getRow(botId: string, seq: number): Row | null {
   const b = getBotRow(botId);
+  if (!b) return null;
   const r = db.prepare('SELECT * FROM rows WHERE bot_id=? AND generation=? AND seq=?').get(botId, b.generation, seq);
   return r ? toRow(r) : null;
 }
@@ -271,10 +279,14 @@ function nextGeneration(botId: string, current: number): number {
 }
 
 export function clearConversation(botId: string) {
-  const b = getBotRow(botId);
-  const next = nextGeneration(botId, b.generation);
-  db.prepare('UPDATE bots SET generation = ?, next_seq = 1 WHERE id=?').run(next, botId);
-  db.prepare('DELETE FROM pending_turns WHERE bot_id=?').run(botId);
+  // Read and move the generation in one step, so two clears at once never land on the same one.
+  const { b, next } = db.transaction(() => {
+    const b = needBot(getBotRow(botId), botId);
+    const next = nextGeneration(botId, b.generation);
+    db.prepare('UPDATE bots SET generation = ?, next_seq = 1 WHERE id=?').run(next, botId);
+    db.prepare('DELETE FROM pending_turns WHERE bot_id=?').run(botId);
+    return { b, next };
+  })();
   lastCleared.set(botId, { generation: next, prev: b.generation, at: now() });
   hub.emit(b.user_id, { type: 'cleared', botId, generation: next });
 }
@@ -384,15 +396,19 @@ export function openConversation(botId: string, generation: number): { ok: true;
 
 export function loadHistory(botId: string): any[] {
   const b = getBotRow(botId);
+  if (!b) return [];
   return (db.prepare('SELECT item FROM llm_items WHERE bot_id=? AND generation=? ORDER BY idx ASC').all(botId, b.generation) as any[]).map((r) => JSON.parse(r.item));
 }
 
 export function appendHistory(botId: string, items: any[]) {
   if (!items.length) return;
-  const b = getBotRow(botId);
-  const start = ((db.prepare('SELECT MAX(idx) m FROM llm_items WHERE bot_id=? AND generation=?').get(botId, b.generation) as any).m ?? -1) + 1;
   const ins = db.prepare('INSERT INTO llm_items(bot_id,generation,idx,item) VALUES (?,?,?,?)');
-  db.transaction(() => items.forEach((it, i) => ins.run(botId, b.generation, start + i, JSON.stringify(it))))();
+  // The next index is read inside the same transaction as the inserts, so two writers never collide.
+  db.transaction(() => {
+    const b = needBot(getBotRow(botId), botId);
+    const start = ((db.prepare('SELECT MAX(idx) m FROM llm_items WHERE bot_id=? AND generation=?').get(botId, b.generation) as any).m ?? -1) + 1;
+    items.forEach((it, i) => ins.run(botId, b.generation, start + i, JSON.stringify(it)));
+  })();
 }
 
 // ---------- live state ----------
@@ -448,10 +464,19 @@ export function toRoutine(r: any): Routine {
     id: r.id, botId: r.bot_id, name: r.name, prompt: r.prompt, schedule: r.schedule, timezone: r.timezone,
     enabled: !!r.enabled, nextRunAt, lastRunAt: r.last_run_at, description: r.schedule.startsWith('event:') ? describeEventSlug(r.schedule) : describeCron(r.schedule),
     quiet: r.quiet === undefined ? true : !!r.quiet,
+    failCount: r.fail_count ?? 0, lastError: r.last_error ?? null, autoOffAt: r.auto_off_at ?? null,
   };
 }
 
 export const listRoutines = (botId: string) => (db.prepare('SELECT * FROM routines WHERE bot_id=? ORDER BY created_at').all(botId) as any[]).map(toRoutine);
 
-export const toTask = (r: any): Task => ({ id: r.id, botId: r.bot_id, title: r.title, state: r.state, note: r.note, updatedAt: r.updated_at });
+/** A task still marked "working" that its bot has not touched for this long while idle is shown as stalled. */
+export const TASK_STALE_MS = 6 * 60 * 60 * 1000;
+/**
+ * Whether a task looks abandoned: the bot said "working" but has not updated it in hours and is not running now
+ * (a turn cut off, a restart, or work finished some other way). The apps say so and offer Done or Delete.
+ */
+export const taskStale = (r: { bot_id: string; state: string; updated_at: number }, at = Date.now()) =>
+  r.state === 'working' && at - r.updated_at > TASK_STALE_MS && !getLive(r.bot_id).isRunning;
+export const toTask = (r: any): Task => ({ id: r.id, botId: r.bot_id, title: r.title, state: r.state, note: r.note, updatedAt: r.updated_at, ...(taskStale(r) ? { stale: true } : {}) });
 export const listTasks = (botId: string) => (db.prepare('SELECT * FROM tasks WHERE bot_id=? ORDER BY updated_at DESC').all(botId) as any[]).map(toTask);

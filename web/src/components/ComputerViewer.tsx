@@ -10,6 +10,7 @@ import { useSelectedBot, useStore } from '../store';
 import { Icon } from './Icon';
 import { ScreenTouchBar, useTouchScreen } from './ScreenTouch';
 import { ClipButtons, ClipOverlay } from './ClipboardControls';
+import { TeachRecordButton } from './TeachRecord';
 import { useRemoteClipboard } from '../lib/remoteClipboard';
 import { screenFailureText, screenRetryDelay } from '../lib/screenRetry';
 import { takeNoVncFailure, watchNoVncFailures } from '../lib/novncFailure';
@@ -359,6 +360,7 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
             clip={conn === 'connected' ? clip : undefined}
             trailing={(
               <>
+                {conn === 'connected' && !bot.outside && <TeachRecordButton bot={bot} compact />}
                 {canFullscreen && (
                   <button type="button" className="screen-touch__icon" onClick={toggleFullscreen} aria-label={fullscreen ? 'Leave full screen' : 'Full screen'}>
                     <Icon name={fullscreen ? 'shrink' : 'expand'} size={16} />
@@ -380,6 +382,7 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
               <span>{hint || 'You’re driving'}</span>
             </span>
             <span className="screen__chin-actions">
+              {conn === 'connected' && !bot.outside && <TeachRecordButton bot={bot} />}
               {conn === 'connected' && <ClipButtons clip={clip} name={bot.name} />}
               {canFullscreen && (
                 <button type="button" className="screen__chin-icon" onClick={toggleFullscreen} aria-label={fullscreen ? 'Leave full screen' : 'Full screen'} title={fullscreen ? 'Leave full screen' : 'Full screen'}>

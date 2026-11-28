@@ -63,15 +63,20 @@ function resolveInside(p, roots, { mustExist = true } = {}) {
   if (/^[\\/]{2}/.test(raw)) throw new Error('Network and device paths are not allowed.');
   if (WIN && /:/.test(raw.replace(/^[A-Za-z]:/, ''))) throw new Error('That path is not allowed.');
   if (!path.isAbsolute(raw)) throw new Error('Use a full path, inside a shared folder.');
+  const full = path.resolve(raw);
   let real;
   try {
-    real = fs.realpathSync.native(raw);
+    real = fs.realpathSync.native(full);
   } catch {
     if (mustExist) throw new Error('No such file or folder.');
-    const parent = path.dirname(path.resolve(raw));
+    // Not there yet. A link with nothing at its end (a dangling one) also lands here: writing to it would
+    // create whatever it points at, maybe outside the shared folders, so only a name that is truly free passes.
+    try { fs.lstatSync(full); throw new Error('That is a link to something that is not there; links are not followed.'); }
+    catch (e) { if (e && e.code !== 'ENOENT') throw e.code ? new Error('That path is not allowed.') : e; }
+    const parent = path.dirname(full);
     let realParent;
     try { realParent = fs.realpathSync.native(parent); } catch { throw new Error('Its folder does not exist.'); }
-    real = path.join(realParent, path.basename(raw));
+    real = path.join(realParent, path.basename(full));
   }
   for (const root of roots) {
     const r = norm(root);
@@ -162,6 +167,8 @@ function makeExecutor(opts) {
           const file = resolveInside(args.path, shared, { mustExist: false });
           if (fs.existsSync(file) && !fs.statSync(file).isFile()) return { ok: false, output: 'That is a folder.' };
           act(`${botName} is writing ${path.basename(file)}`);
+          // Checked again right before writing: a link made in between is refused, not followed.
+          try { if (fs.lstatSync(file).isSymbolicLink()) return { ok: false, output: 'That is a link; links are not written through.' }; } catch { /* not there yet */ }
           fs.writeFileSync(file, content);
           return { ok: true, output: `Wrote ${Buffer.byteLength(content)} bytes to ${file}.` };
         }

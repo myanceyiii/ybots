@@ -209,7 +209,13 @@ export async function takeRunSlot(chatId: string, signal?: AbortSignal): Promise
       const list = waiting.get(owner) ?? [];
       list.push(resolve);
       waiting.set(owner, list);
-      signal?.addEventListener('abort', () => resolve(), { once: true });
+      // A stopped waiter leaves the line, so the next release wakes a live one instead of this one.
+      signal?.addEventListener('abort', () => {
+        const l = waiting.get(owner);
+        const i = l?.indexOf(resolve) ?? -1;
+        if (l && i >= 0) l.splice(i, 1);
+        resolve();
+      }, { once: true });
     });
   }
   running.set(owner, (running.get(owner) ?? 0) + 1);

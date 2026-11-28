@@ -27,6 +27,7 @@ import { db, now } from './db.js';
 import { env, isLoopbackUrl } from './env.js';
 import { newId } from './lib/ids.js';
 import { currentSession, displayName, type AuthVars } from './lib/auth.js';
+import { inScope } from './lib/scope.js';
 import { appendRow, emitBot, getBotRow } from './store.js';
 import { ApprovalError, enqueue, resolveApproval } from './agent/loop.js';
 import type { EventBody, MessageBody, VoiceCallRecord, VoiceOption } from './types.js';
@@ -171,10 +172,17 @@ async function synthesizeStream(text: string, voice: string, speed: number, sign
     const wav = await synthesize(text, voice, speed);
     return new ReadableStream({ start(c) { c.enqueue(new Uint8Array(wav)); c.close(); } });
   }
-  const release = await ttsTurn(false);
+  const taken = await ttsTurn(false);
+  // Given back exactly once, however the stream ends (done, error, cancel, or no body at all).
+  let given = false;
+  const release = () => { if (!given) { given = true; taken(); } };
   let r: Response;
-  try { r = await speechRequest(speechBody(text, voice, speed, 'pcm'), signal); } catch (e) { release(); throw e; }
-  const reader = r.body!.getReader();
+  let reader: ReadableStreamDefaultReader<Uint8Array>;
+  try {
+    r = await speechRequest(speechBody(text, voice, speed, 'pcm'), signal);
+    if (!r.body) throw new SpeechError('The voice service sent no audio.');
+    reader = r.body.getReader();
+  } catch (e) { release(); throw e; }
   let odd: number | null = null; // a byte left over, so every piece holds whole samples
   return new ReadableStream<Uint8Array>({
     start(c) { c.enqueue(new Uint8Array(wavHeader(0xffffffff))); },
@@ -445,14 +453,19 @@ function settingsOf(bot: any) {
   return { voice, speed: clampSpeed(bot?.voice_speed ?? 1), language };
 }
 
-function ownBot(userId: string, botId: string | undefined) {
+/** The account's bot, and only one this sign-in may see (a scoped sign-in sees only its own bots). */
+function ownBot(c: any, botId: string | undefined) {
   if (!botId) return null;
   const b = getBotRow(botId);
-  return b && b.user_id === userId ? b : null;
+  return b && b.user_id === c.get('user').id && inScope(c.get('scope') ?? null, b.id) ? b : null;
 }
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
-const firstName = (userId: string) => String((db.prepare('SELECT name FROM users WHERE id=?').get(userId) as any)?.name ?? '').split(/\s+/)[0];
+/** The caller's first name: the person on this sign-in (a scoped family member is not the owner). */
+const firstName = (c: any) => {
+  const user = c.get('user');
+  return String(displayName(user, currentSession(c)?.person ?? null) ?? '').split(/\s+/)[0];
+};
 
 // speeds: [1] when the voice has one pace (Phonon), and the apps leave the Speed setting out.
 voiceApi.get('/options', async (c) => c.json({ live: await liveSttUp(), voices: voiceList(), languages: LANGUAGES, speeds: speedWorks ? SPEEDS : [1], defaultVoice: speech.defaultVoice, approvalsByVoice: speech.approvals, engine: speech.engine, streams: speech.engine === 'phonon' }));
@@ -473,8 +486,10 @@ const fmtDuration = (ms: number) => {
 
 voiceApi.post('/session', async (c) => {
   const user = c.get('user');
+  // A call is a person talking: a script session would speak to the bot as the owner, so it never starts one.
+  if (c.get('agent')) return c.json({ error: 'Only a person can start a voice call.' }, 403);
   const { botId } = await c.req.json<{ botId: string }>().catch(() => ({ botId: '' }));
-  const bot = ownBot(user.id, botId);
+  const bot = ownBot(c, botId);
   if (!bot) return c.json({ error: 'not found' }, 404);
   // A group has no voice of its own: its members answer in the chat, and nobody would speak on a call.
   if (bot.kind === 'room') return c.json({ error: 'Voice chat is with one Bot at a time. Open a Bot to call it.' }, 400);
@@ -483,7 +498,7 @@ voiceApi.post('/session', async (c) => {
   const startRow = appendRow(bot.id, 'event', callEvent(`Voice call with ${bot.name} started`, { id: callId, phase: 'started' }));
   calls.set(callId, { id: callId, botId: bot.id, userId: user.id, startedAt: now(), requests: [] });
   emitBot(bot.id);
-  const name = firstName(user.id);
+  const name = firstName(c);
   return c.json({
     callId,
     startSeq: startRow.seq,
@@ -513,8 +528,9 @@ export function spokenDecision(text: string): 'allow' | 'deny' | null {
 
 voiceApi.post('/turn', async (c) => {
   const user = c.get('user');
+  if (c.get('agent')) return c.json({ error: 'Only a person can talk on a voice call.' }, 403);
   const form = await c.req.formData().catch(() => null);
-  const bot = ownBot(user.id, String(form?.get('botId') ?? ''));
+  const bot = ownBot(c, String(form?.get('botId') ?? ''));
   if (!bot) return c.json({ error: 'not found' }, 404);
   const callId = String(form?.get('callId') ?? '');
   const call = calls.get(callId);
@@ -560,7 +576,7 @@ voiceApi.post('/turn', async (c) => {
 
   const from: MessageBody['from'] = { kind: 'voice', id: callId, name: 'Voice call' };
   const row = appendRow(bot.id, 'message', { type: 'message', role: 'user', text, from });
-  const name = firstName(user.id) || 'The user';
+  const name = firstName(c) || 'The user';
   enqueue(bot.id, {
     type: 'user',
     text: `[Voice call: ${name} said this on a live voice call with you, and everything you write back is read aloud to them. Reply in short, natural spoken sentences: lead with the answer, no markdown, lists, links, IDs or file paths unless asked, and say numbers and dates the way a person would. If the work will take more than a few seconds, first say in one short sentence what you are about to do, then do it, then give the outcome.]\n${text}`,
@@ -572,7 +588,7 @@ voiceApi.post('/turn', async (c) => {
 voiceApi.post('/end', async (c) => {
   const user = c.get('user');
   const { botId, callId, transcript, error } = await c.req.json<{ botId: string; callId: string; transcript?: { role: string; text: string }[]; error?: string }>();
-  const bot = ownBot(user.id, botId);
+  const bot = ownBot(c, botId);
   if (!bot) return c.json({ error: 'not found' }, 404);
   const call = calls.get(callId);
   if (!call || call.botId !== bot.id) return c.json({ ok: true, duplicate: true });
@@ -596,7 +612,9 @@ setInterval(() => {
   for (const call of calls.values()) {
     if (now() - call.startedAt < 2 * 3600_000) continue;
     calls.delete(call.id);
-    appendRow(call.botId, 'event', callEvent('Voice call ended', { id: call.id, phase: 'ended', tasks: call.requests }));
+    // The bot may have been deleted while the call was open: nothing to write to then.
+    if (!getBotRow(call.botId)) continue;
+    try { appendRow(call.botId, 'event', callEvent('Voice call ended', { id: call.id, phase: 'ended', tasks: call.requests })); } catch (e) { console.warn('[voice] could not close an old call', e); }
   }
 }, 10 * 60_000).unref();
 
@@ -605,7 +623,7 @@ setInterval(() => {
 voiceApi.post('/speak', async (c) => {
   const user = c.get('user');
   const p = await c.req.json<{ botId?: string; text?: string; voice?: string; speed?: number; stream?: boolean }>().catch(() => ({} as any));
-  const bot = ownBot(user.id, p.botId);
+  const bot = ownBot(c, p.botId);
   if (!bot) return c.json({ error: 'not found' }, 404);
   const s = settingsOf(bot);
   const text = String(p.text ?? '').trim().slice(0, 1500);
@@ -633,7 +651,7 @@ voiceApi.post('/speak', async (c) => {
 voiceApi.post('/preview', async (c) => {
   const user = c.get('user');
   const p = await c.req.json<{ botId?: string; voice?: string; speed?: number }>().catch(() => ({} as any));
-  const bot = ownBot(user.id, p.botId);
+  const bot = ownBot(c, p.botId);
   const s = settingsOf(bot);
   const voice = p.voice && voiceList().some((v) => v.id === p.voice) ? p.voice : s.voice;
   try {

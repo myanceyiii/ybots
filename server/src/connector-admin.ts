@@ -427,6 +427,11 @@ export async function proposeAndApply(botId: string, input: ChangeInput, ask: As
   };
   if (answer !== 'allow') { mark(answer === 'deny' ? 'declined' : 'skipped'); return { id, status: answer === 'deny' ? 'declined' : 'not answered', summary: p.summary }; }
   try {
+    // The card may have waited a while: if the app's entry changed meanwhile (a new key, another change),
+    // the approved change no longer describes what would be written, so nothing is.
+    let now2: ReturnType<typeof plan> | null = null;
+    try { now2 = plan(input); } catch { /* fails below */ }
+    if (!now2 || digestOf(now2) !== digestOf(p)) throw new AdminError('The connection changed while the card waited, so nothing was changed. Ask again.');
     const result = await p.apply(bot.user_id);
     mark('applied', { result });
     if (p.rollsBack) db.prepare('UPDATE connector_admin_changes SET rolled_back_by=? WHERE id=?').run(id, p.rollsBack);

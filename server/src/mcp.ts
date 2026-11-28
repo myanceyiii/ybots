@@ -1,11 +1,13 @@
 import { isMailSend, noteRuleUse } from './allow-rules.js';
 import { gateBrowserTool, notesText, scrubList, takeNotes } from './browser-guard.js';
+import { teachRecording } from './teach.js';
 import { maintainerAudit, redactCommand } from './maintainer-guard.js';
 import crypto from 'node:crypto';
 import { Hono } from 'hono';
 import { getConnInfo } from '@hono/node-server/conninfo';
 import { isLocalRequest } from './lib/auth.js';
 import { appendRow, emitBot, getBotRow } from './store.js';
+import { chatsOf } from './side-chats.js';
 import { appInfo, appRule, ensureApps, findAppTool } from './local-apps.js';
 import { toolsForBot } from './plugins/registry.js';
 import fs from 'node:fs';
@@ -14,9 +16,23 @@ import { db } from './db.js';
 import { engineHome, engineKind, mcpToken, primaryBotId, restartEngine } from './engine.js';
 import { chatForCall, claimSteers, claimToolCall, enqueueBotMessage, expireApproval, isAnyChatBusy, markSilent, noteMailResult, noteToolOutcome, requestApproval, turnDepth } from './agent/loop.js';
 import { policyFor, runAppTool, toolFor, toolMap, TOOLS, type ToolCtx } from './agent/tools.js';
-import { hermesPolicy } from './plugins/hermes-gate.js';
+import { hermesPolicy, hermesTitle } from './plugins/hermes-gate.js';
 import { summarizing } from './list-summary.js';
 import { isPcTool, pcToolsFor, runPcTool } from './machines.js';
+import { awaitResult, logActivity } from './activity.js';
+
+/** How a card was answered, for the activity trail: "Asked on its card, answered by Alex (phone app)". */
+const cardHow = (answer: string, meta: { answeredBy?: string; answeredVia?: string }) =>
+  answer === 'expired' ? 'Asked on its card, nobody answered in time'
+    : `Asked on its card${meta.answeredBy ? `, answered by ${meta.answeredBy}${meta.answeredVia ? ` (${meta.answeredVia})` : ''}` : ''}`;
+/** A short, redacted hint of what a call did (the command, the page), never its full arguments. */
+function argHint(tool: string, args: any): string | null {
+  const a = args && typeof args === 'object' ? args : {};
+  if (tool === 'terminal' || tool === 'execute_code') return redactCommand(String(a.command ?? a.code ?? '')).slice(0, 200) || null;
+  if (tool === 'write_file' || tool === 'patch' || tool === 'read_file') return String(a.path ?? a.file_path ?? '').slice(0, 200) || null;
+  if (tool === 'browser_navigate') return String(a.url ?? '').slice(0, 200) || null;
+  return null;
+}
 
 /**
  * The app's tools, served to the Hermes engines over MCP (streamable HTTP, JSON answers only).
@@ -80,7 +96,14 @@ async function listTools(botId: string | null) {
   return [...own, ...apps];
 }
 
-async function callTool(botId: string | null, rawName: string, args: any): Promise<CallResult> {
+/** Run an approval request whose card expires if the agent's HTTP call goes away (Hermes restarted, a proxy timed out). */
+async function expiringOnAbort<T>(signal: AbortSignal | undefined, meta: { approvalId?: string }, run: () => Promise<T>): Promise<T> {
+  const gone = () => { if (meta.approvalId) expireApproval(meta.approvalId); };
+  signal?.addEventListener('abort', gone, { once: true });
+  try { return await run(); } finally { signal?.removeEventListener('abort', gone); }
+}
+
+async function callTool(botId: string | null, rawName: string, args: any, signal?: AbortSignal): Promise<CallResult> {
   const bot = botId ? getBotRow(botId) : null;
   if (!botId || !bot) return text('The team app has no bot for this agent yet. Ask the user to open the app once, then try again.', true);
   const userId: string = bot.user_id;
@@ -91,14 +114,20 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
     const claim = await claimToolCall(botId, name, args);
     const chat = claim?.chat ?? botId;
     const rowSeq = claim?.seq ?? null;
+    let asked: { answer: string; meta: { answeredBy?: string; answeredVia?: string } } | null = null;
     try {
       const r = await runPcTool(userId, botId, name, args, {
-        requestApproval: (pol, a, meta) => requestApproval({ userId, botId: chat }, pol, a, rowSeq, meta),
+        requestApproval: async (pol, a, meta) => { const m: { approvalId?: string; digest?: string; answeredBy?: string; answeredVia?: string } = meta ?? {}; const answer = await expiringOnAbort(signal, m, () => requestApproval({ userId, botId: chat }, pol, a, rowSeq, m)); asked = { answer, meta: m }; return answer; },
+        chatId: chat,
       });
       noteToolOutcome(chat, rowSeq, { status: r.status, summary: r.status === 'denied' ? 'Not allowed' : r.status === 'error' ? r.output.slice(0, 200) : undefined });
+      const q = asked as { answer: string; meta: { answeredBy?: string; answeredVia?: string } } | null;
+      logActivity({ botId, chatId: chat, tool: name, title: name.replace(/_/g, ' '), source: 'pc', outcome: r.status === 'done' ? 'allowed' : r.status === 'denied' ? 'refused' : 'failed',
+        how: q ? cardHow(q.answer, q.meta) : r.status === 'denied' ? 'Not allowed on that PC' : null, detail: r.status === 'done' ? null : r.output.slice(0, 300) });
       return text(r.output, r.status === 'error');
     } catch (e: any) {
       noteToolOutcome(chat, rowSeq, { status: 'error', summary: String(e?.message ?? e).slice(0, 200) });
+      logActivity({ botId, chatId: chat, tool: name, title: name.replace(/_/g, ' '), source: 'pc', outcome: 'failed', detail: String(e?.message ?? e) });
       return text(`Tool error: ${String(e?.message ?? e)}`, true);
     }
   }
@@ -119,6 +148,7 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
     const ownTool = toolMap.get(name);
     if (ownTool && !toolFor(ownTool, botId)) {
       noteToolOutcome(chat, rowSeq, { status: 'denied', summary: 'Not allowed' });
+      logActivity({ botId, chatId: chat, tool: name, title: ownTool.label ?? name, source: 'tool', outcome: 'refused', how: 'For the admin bot only' });
       return text('That tool is for the admin bot only.', true);
     }
     if (ownTool) {
@@ -127,21 +157,29 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
       // A tool that says it failed is shown as failed, as app tools are below.
       const outcome = r.summary === 'failed' ? { status: 'error' as const, summary: 'Failed' } : r.summary === 'Not allowed' ? { status: 'denied' as const, summary: r.summary } : { status: 'done' as const, summary: r.summary };
       noteToolOutcome(chat, rowSeq, outcome);
+      // A refused hand-off (send_to_bot says "… refused"; a walled bot's message outside its allow-list) is a refused row.
+      const refused = outcome.status === 'denied' || /\brefused\b/i.test(r.summary ?? '');
+      logActivity({ botId, chatId: chat, tool: name, title: r.summary && r.summary !== 'failed' ? r.summary : ownTool.label ?? name, source: name === 'send_to_bot' ? 'handoff' : 'tool',
+        outcome: refused ? 'refused' : outcome.status === 'error' ? 'failed' : 'allowed', detail: refused || outcome.status === 'error' ? r.output.slice(0, 300) : null });
       // A failure or refusal is marked as an error in the protocol too, not only in the activity row.
       return text(r.output, outcome.status !== 'done');
     }
 
-    const pol = policyFor(userId, name, args, botId);
+    const pol = policyFor(userId, name, args, botId, chat);
+    let how: string | null = pol.viaRule ? (pol.viaRule.startsWith('app:') ? 'Allowed in app settings' : pol.viaRule.startsWith('conv:') ? 'Allowed for this conversation' : 'Always allow') : null;
     if (pol.decision === 'block') {
       noteToolOutcome(chat, rowSeq, { status: 'denied', summary: 'Not allowed' });
+      logActivity({ botId, chatId: chat, tool: name, title: pol.title, source: 'tool', outcome: 'refused', how: "Set to Don't allow" });
       return text(DECLINED, true);
     }
     // Who answered the card is passed on with the result, so a bot (or its helper, which never sees the
     // card) reports what happened instead of guessing whether a card appeared.
     if (pol.decision === 'ask') {
       const meta: { approvalId?: string; answeredBy?: string; answeredVia?: string } = {};
-      const answer = await requestApproval({ userId, botId: chat }, pol, args, rowSeq, meta);
+      const answer = await expiringOnAbort(signal, meta, () => requestApproval({ userId, botId: chat }, pol, args, rowSeq, meta));
       const by = meta.answeredBy ? ` (${meta.answeredBy}${meta.answeredVia ? `, ${meta.answeredVia}` : ''})` : '';
+      how = cardHow(answer, meta);
+      if (answer !== 'allow') logActivity({ botId, chatId: chat, tool: name, title: pol.title, source: 'card', outcome: 'refused', how });
       if (answer !== 'allow') return text(answer === 'deny' ? DECLINED.replace('The user declined this action.', `The user declined this action on its approval card${by}.`) : SKIPPED, true);
       approvedBy = `[Approval card shown and allowed${by}.]\n`;
       mailApproval = meta.approvalId && isMailSend(pol.key) ? meta.approvalId : '';
@@ -155,10 +193,12 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
       emitBot(chat);
     }
     noteToolOutcome(chat, rowSeq, { status: r.summary === 'failed' ? 'error' : 'done', summary: r.summary === 'failed' ? 'Failed' : undefined });
+    logActivity({ botId, chatId: chat, tool: name, title: pol.title, source: approvedBy ? 'card' : 'tool', outcome: r.summary === 'failed' ? 'failed' : 'allowed', how, detail: r.summary === 'failed' ? r.output.slice(0, 300) : null });
     return r.summary === 'failed' ? appFailure(name, approvedBy + r.output) : text(approvedBy + r.output);
   } catch (e: any) {
     const msg = String(e?.message ?? e);
     noteToolOutcome(chat, rowSeq, { status: 'error', summary: msg.slice(0, 200) });
+    logActivity({ botId, chatId: chat, tool: name, title: toolMap.get(name)?.label ?? name, source: toolMap.has(name) ? 'tool' : approvedBy ? 'card' : 'tool', outcome: 'failed', detail: msg });
     if (mailApproval) noteMailResult(mailApproval, false, msg);
     if (!own && findAppTool(name)) return appFailure(name, `${approvedBy}Tool error: ${msg}`);
     return text(`${approvedBy}Tool error: ${msg}`, true);
@@ -204,7 +244,7 @@ async function staleSession(sid: string, botId: string | null): Promise<boolean>
 }
 
 /** Answer one JSON-RPC message; null for notifications (they get no answer). */
-async function handle(msg: any, botId: string | null, sid?: string): Promise<object | null> {
+async function handle(msg: any, botId: string | null, sid?: string, signal?: AbortSignal): Promise<object | null> {
   if (!msg || typeof msg !== 'object' || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') {
     // A response to something we never asked; nothing to do with it.
     if (msg && typeof msg === 'object' && ('result' in msg || 'error' in msg)) return null;
@@ -242,7 +282,7 @@ async function handle(msg: any, botId: string | null, sid?: string): Promise<obj
       const name = params?.name;
       if (typeof name !== 'string' || !name) return rpcError(id, -32602, 'Missing tool name');
       const args = params?.arguments && typeof params.arguments === 'object' ? params.arguments : {};
-      return { jsonrpc: '2.0', id, result: await callTool(botId, name, args) };
+      return { jsonrpc: '2.0', id, result: await callTool(botId, name, args, signal) };
     }
     case 'resources/list':
       return { jsonrpc: '2.0', id, result: { resources: [] } };
@@ -299,7 +339,8 @@ export async function toolListFingerprint(botId: string): Promise<string> {
 export function refreshBlocker(botId: string, t = Date.now()): string | null {
   if (engineKind(botId) !== 'managed') return 'not a managed engine';
   if (isAnyChatBusy(botId)) return 'a turn is running';
-  const waiting = db.prepare("SELECT count(*) n FROM approvals WHERE bot_id=? AND status='pending'").get(botId) as { n: number };
+  // Cards in its side chats count too: they wait on the same gateway.
+  const waiting = db.prepare("SELECT count(*) n FROM approvals WHERE bot_id IN (SELECT value FROM json_each(?)) AND status='pending'").get(JSON.stringify(chatsOf(botId))) as { n: number };
   if (waiting.n) return 'an approval card is waiting';
   if (t - (lastUse.get(botId) ?? 0) < QUIET_MS) return 'it used a tool in the last two minutes';
   if (t - (lastRestart.get(botId) ?? 0) < COOLDOWN_MS) return 'it was restarted for this in the last ten minutes';
@@ -349,7 +390,7 @@ mcpApi.post('/:bot', async (c) => {
   try { body = await c.req.json(); } catch { return c.json(rpcError(null, -32700, 'Parse error'), 400); }
   const given = c.req.header('mcp-session-id')?.trim() || undefined;
   if (Array.isArray(body)) {
-    const answers = (await Promise.all(body.map((m) => handle(m, who.botId, given)))).filter(Boolean);
+    const answers = (await Promise.all(body.map((m) => handle(m, who.botId, given, c.req.raw.signal)))).filter(Boolean);
     return answers.length ? c.json(answers) : c.body(null, 202);
   }
   // A keepalive on a connection whose tools are out of date: "session gone", so the agent reconnects.
@@ -361,7 +402,7 @@ mcpApi.post('/:bot', async (c) => {
     const answer = await handle(body, who.botId);
     return c.json(answer, 200, { 'Mcp-Session-Id': newSession() });
   }
-  const answer = await handle(body, who.botId, given);
+  const answer = await handle(body, who.botId, given, c.req.raw.signal);
   return answer ? c.json(answer) : c.body(null, 202);
 });
 
@@ -393,16 +434,30 @@ mcpApi.post('/:bot/gate', async (c) => {
   // while the app has a turn running for this bot is the app's to approve; the rest keeps Hermes' own rules.
   // A chat-list summary running on this Hermes (list-summary.ts) never uses tools: whatever it tries is refused.
   if (summarizing(bot.id)) return c.json({ action: 'block', message: 'A chat list summary never uses tools. Reply with the one line only.' });
+  // Every decision below is one row of the activity trail (activity.ts), under the chat whose turn made the call.
+  const chat = chatForCall(bot.id, tool, args);
+  const hint = argHint(tool, args);
+  const trail = (outcome: 'allowed' | 'refused', how: string | null, source: 'gate' | 'card' | 'browser' = 'gate', detail: string | null = hint) => {
+    const id = logActivity({ botId: bot.id, chatId: chat, tool: `hermes__${tool}`, title: hermesTitle(tool), outcome, how, detail, source });
+    if (outcome === 'allowed') awaitResult(chat, tool, id);
+  };
   // The browser guard (browser-guard.ts): connect to the bot's Chrome before it browses, so pay buttons are
   // held from the first page; on a page that can take a payment, acting browser tools wait for an approval.
-  if (tool.startsWith('browser_') || tool === 'computer_use') {
-    const guard = await gateBrowserTool(bot.id, tool, args).catch(() => null);
-    if (guard) return c.json({ action: 'block', message: guard.block });
+  // (The chat above is also whose "Allow for this conversation" answers count.)
+  // Teach a bot (teach.ts): while the person records a lesson on this browser, only their steps count.
+  if ((tool.startsWith('browser_') || tool === 'computer_use') && teachRecording(bot.id)) {
+    return c.json({ action: 'block', message: 'The person is recording a lesson on your browser right now. Wait until they finish, then carry on.' });
   }
+  if (tool.startsWith('browser_') || tool === 'computer_use') {
+    const guard = await gateBrowserTool(bot.id, tool, args, chat).catch(() => null);
+    if (guard) { trail('refused', 'Browser guard', 'browser', guard.block.split(/(?<=\.)\s/)[0]); return c.json({ action: 'block', message: guard.block }); }
+  }
+  // Work on the shared primary Hermes from its other front-ends is not the app's, so it is not on the trail either.
   if (bot.engine === 'primary' && !isAnyChatBusy(bot.id)) return c.json({ action: 'allow', note: 'not an app turn' });
-  const pol = hermesPolicy(bot.user_id, bot.id, tool, args, { danger: body?.danger });
+  const pol = hermesPolicy(bot.user_id, bot.id, tool, args, { danger: body?.danger }, chat);
   if (pol.decision === 'allow') {
     if (pol.viaRule) noteRuleUse(pol.viaRule, bot.id, pol.key, args, pol.title);
+    trail('allowed', pol.freeRun ? 'Free-run' : pol.viaRule ? (pol.viaRule.startsWith('app:') ? 'Allowed in app settings' : pol.viaRule.startsWith('conv:') ? 'Allowed for this conversation' : 'Always allow') : 'Look-only or allowed without asking');
     if (pol.freeRun) {
       const shown = redactCommand(pol.freeRun.command);
       noteRuleUse('free:terminal', bot.id, pol.key, args, shown);
@@ -412,15 +467,16 @@ mcpApi.post('/:bot/gate', async (c) => {
     }
     return c.json({ action: 'allow' });
   }
-  if (pol.decision === 'block') return c.json({ action: 'block', message: DECLINED });
+  if (pol.decision === 'block') { trail('refused', "Set to Don't allow"); return c.json({ action: 'block', message: DECLINED }); }
   // The card goes to the chat whose turn made the call: the main chat or one of its side chats.
   // If Hermes stops waiting (its hook limit, a restart, Stop), the card expires instead of staying open for
   // a tap that would do nothing.
-  const meta: { approvalId?: string } = {};
+  const meta: { approvalId?: string; answeredBy?: string; answeredVia?: string } = {};
   const gone = () => { if (meta.approvalId) expireApproval(meta.approvalId); };
   c.req.raw.signal?.addEventListener('abort', gone, { once: true });
-  const answer = await requestApproval({ userId: bot.user_id, botId: chatForCall(bot.id, tool, args) }, pol, args, null, meta);
+  const answer = await requestApproval({ userId: bot.user_id, botId: chat }, pol, args, null, meta);
   c.req.raw.signal?.removeEventListener('abort', gone);
+  trail(answer === 'allow' ? 'allowed' : 'refused', cardHow(answer, meta), 'card');
   return c.json(answer === 'allow' ? { action: 'allow' } : { action: 'block', message: answer === 'deny' ? DECLINED : SKIPPED });
 });
 
@@ -446,7 +502,7 @@ mcpApi.post('/:bot/steer', async (c) => {
 });
 
 // No server-to-client stream.
-mcpApi.all('/:bot', (c) => c.body(null, 405, { Allow: 'POST' }));
+mcpApi.all('/:bot', (c) => (isLocalRequest(c) ? c.body(null, 405, { Allow: 'POST' }) : c.body(null, 403)));
 /**
  * After a browser step (gate plugin's transform_tool_result): notes for the bot from the browser guard (a pay
  * button was held, a CAPTCHA showed) and the salted hashes of values typed from secure input cards, so the
@@ -460,5 +516,6 @@ mcpApi.post('/:bot/after', async (c) => {
   const scrub = scrubList(who.botId);
   return c.json({ ...(note ? { note } : {}), ...(scrub ? { scrub } : {}) });
 });
-mcpApi.all('/:bot/gate', (c) => c.body(null, 405, { Allow: 'POST' }));
-mcpApi.all('/:bot/steer', (c) => c.body(null, 405, { Allow: 'POST' }));
+mcpApi.all('/:bot/gate', (c) => (isLocalRequest(c) ? c.body(null, 405, { Allow: 'POST' }) : c.body(null, 403)));
+mcpApi.all('/:bot/steer', (c) => (isLocalRequest(c) ? c.body(null, 405, { Allow: 'POST' }) : c.body(null, 403)));
+mcpApi.all('/:bot/after', (c) => (isLocalRequest(c) ? c.body(null, 405, { Allow: 'POST' }) : c.body(null, 403)));
